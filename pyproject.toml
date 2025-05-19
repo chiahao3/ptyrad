@@ -25,5 +25,5 @@ dependencies = []
 "Bug Tracker" = "https://github.com/chiahao3/ptyrad/issues"
 
 [tool.setuptools]
-packages = ["ptyrad"]
+packages = ["ptyrad", "ptyrad.utils"]
 package-dir = {"" = "src"}
