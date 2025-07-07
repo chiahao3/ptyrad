@@ -11,6 +11,7 @@ from torchvision.transforms.functional import gaussian_blur
 from ptyrad.utils import fftshift2, gaussian_blur_1d, ifftshift2, make_sigmoid_mask, vprint
 
 
+@torch.compiler.disable #TorchRuntimeError: Dynamo failed to run FX node with fake tensors: call_function <Wrapped method <original sub>>(*(FakeTensor(..., size=(5,), dtype=torch.float64), 2.0), **{}): got AttributeError("'ndarray' object has no attribute 'sub'")
 class CombinedConstraint(torch.nn.Module):
     """Applies iteration-wise in-place constraints on optimizable tensors.
 

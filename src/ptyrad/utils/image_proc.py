@@ -9,7 +9,7 @@ from scipy.optimize import minimize
 from torch.fft import fft2, fftfreq, ifft2
 
 from .common import vprint
-from .math_ops import fftshift2, ifftshift2, make_gaussian_mask
+from .math_ops import fftshift2, ifftshift2, make_gaussian_mask, torch_phasor
 
 
 # Some quick estimation analysis tools
@@ -528,7 +528,8 @@ def imshift_batch(img, shifts, grid):
     grid = grid[(slice(None),) + (None,) * (ndim - 1) + (...,)]                       # Expand grid to (2,1,1,...,Ny,Nx) so grid.ndim = ndim+2. It was written as `grid = grid[:,*[None]*(ndim-1), ...]` for Python 3.11 or above with better readability
     shift_y, shift_x = shifts[:, 0], shifts[:, 1]                                     # shift_y, shift_x are (Nb,1,1,...) with ndim singletons, so the shift_y.ndim = ndim+1
     ky, kx = grid[0], grid[1]                                                         # ky, kx are (1,1,...,Ny,Nx) with ndim-2 singletons, so the ky.ndim = ndim+1
-    w = torch.exp(-(2j * torch.pi) * (shift_x * kx + shift_y * ky))                   # w = (Nb, 1,1,...,Ny,Nx) so w.ndim = ndim+1. w is at the center.
+    phase = -2*torch.pi * (shift_x * kx + shift_y * ky)
+    w = torch_phasor(phase)                                                           # w = (Nb, 1,1,...,Ny,Nx) so w.ndim = ndim+1. w is at the center.
     shifted_img = ifft2(ifftshift2(fftshift2(fft2(img)) * w))                         # For real-valued input, take shifted_img.real
     
     # Note that for imshift, it's better to keep fft2(img) than fft2(ifftshift2(img))

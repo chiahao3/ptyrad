@@ -17,6 +17,7 @@ from ptyrad.utils import fftshift2
 # Note that element-wise multiplication of tensor (*) is defaulted as out-of-place operation
 # So new tensor is being created and referenced to the old graph to keep the gradient flowing
 
+@torch.compile
 def multislice_forward_model_vec_all(object_patches, probe, H, omode_occu=None, eps=1e-10):
     """
     Computes the multislice electron diffraction pattern with multiple incoherent probe 
@@ -41,6 +42,11 @@ def multislice_forward_model_vec_all(object_patches, probe, H, omode_occu=None, 
         forward diffraction pattern for each sample in the batch.
     """
     
+    # These .contiguous() are needed for torch.compile
+    object_patches = object_patches.contiguous()
+    probe = probe.contiguous()
+    H = H.contiguous()
+
     # Initialize omode_occu if it's not specified
     if omode_occu is None:
         objp=  object_patches[...,1]
@@ -50,11 +56,11 @@ def multislice_forward_model_vec_all(object_patches, probe, H, omode_occu=None, 
         omode_occu = torch.ones(omode, dtype=dtype, device=device) / omode
     
     # Cast the object back to actual complex tensor
-    object_cplx = torch.polar(object_patches[...,0], object_patches[...,1]) # (N, omode, Nz, Ny, Nx)
+    object_cplx = torch.polar(object_patches[...,0], object_patches[...,1]).contiguous() # (N, omode, Nz, Ny, Nx)
     n_slices = object_cplx.shape[2]
     
     # Expand psi to include omode dimension
-    psi = probe[:, :, None, :, :] # (N, pmode, Ny, Nx) -> (N, pmode, omode, Ny, Nx)
+    psi = probe[:, :, None, :, :].contiguous() # (N, pmode, Ny, Nx) -> (N, pmode, omode, Ny, Nx)
 
     # Propagating each object layer using broadcasting
     for n in range(n_slices-1):

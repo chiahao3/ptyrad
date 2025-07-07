@@ -21,8 +21,8 @@ Utility functions for logging, timing, image processing, etc.
 from .common import (  # noqa: F401
     CustomLogger,
     expand_presets,
-    get_time,
     get_nested,
+    get_time,
     handle_hdf5_types,
     list_nested_keys,
     ndarrays_to_tensors,
@@ -57,6 +57,7 @@ from .math_ops import (  # noqa: F401
     make_gaussian_mask,
     make_sigmoid_mask,
     power_law,
+    torch_phasor,
 )
 from .physics import (  # noqa: F401
     get_default_probe_simu_params,

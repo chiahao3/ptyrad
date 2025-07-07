@@ -14,6 +14,8 @@ from ptyrad.utils import normalize_from_zero_to_one
 # usually 0.5 for loss_single and 0.2 for loss_pacbed to emphasize the diffuse background
 # The obj-dependent regularization loss_sparse is using the objp_patches as input
 # In this way it'll only calculate values within the ROI, so the edges of the object would not be included
+
+@torch.compile
 class CombinedLoss(torch.nn.Module):
     """
     Computes the combined loss for ptychographic reconstruction, incorporating multiple loss components.

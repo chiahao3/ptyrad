@@ -655,6 +655,7 @@ def recon_loop(model, init, params, optimizer, loss_fn, constraint_fn, indices, 
     vprint(f"### Finished {NITER} iterations, averaged iter_t = {np.mean(model_instance.iter_times):.5g} with std = {np.std(model_instance.iter_times):.3f} ###", verbose=verbose)
     vprint(" ", verbose=verbose)
 
+@torch.compile
 def recon_step(batches, grad_accumulation, model, optimizer, loss_fn, constraint_fn, niter, verbose=True, acc=None):
     """
     Performs one iteration (or step) of the ptychographic reconstruction in the optimization loop.
@@ -780,6 +781,10 @@ def recon_step(batches, grad_accumulation, model, optimizer, loss_fn, constraint
     model_instance.avg_tilt_iters.append((niter, model_instance.opt_obj_tilts.detach().mean(0).cpu().numpy()))
     return batch_losses
 
+# TODO Need to find a workaround to enable this grad toggle during torch.compile
+# This is ignored by torch.compile because torch.compile will only compile the graph given the 1st iteration
+# One solution would be to calculate grads for all tensors and manually mask it, but this is a bit wasteful
+torch.compiler.disable
 def toggle_grad_requires(model, niter, verbose):
     """Toggle requires_grad based on start iteration for each optimizable tensor."""
     start_iter_dict = model.start_iter
@@ -789,6 +794,7 @@ def toggle_grad_requires(model, niter, verbose):
         optimizable_tensors[param_name].requires_grad = requires_grad
         vprint(f"Iter: {niter}, {param_name}.requires_grad = {requires_grad}", verbose=verbose)
 
+@torch.compile
 def compute_loss(batch, model, model_instance, loss_fn, acc=None):
     """Compute the model output and loss, with optional support for accelerate's autocast."""
     if acc is not None:
@@ -805,6 +811,7 @@ def compute_loss(batch, model, model_instance, loss_fn, acc=None):
     
     return loss_batch, losses
 
+@torch.compiler.disable
 def loss_logger(batch_losses, niter, iter_t, verbose=True):
     """
     Logs and summarizes the loss values for an iteration during the ptychographic reconstruction.

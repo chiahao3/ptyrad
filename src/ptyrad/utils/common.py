@@ -419,6 +419,7 @@ def set_gpu_device(gpuid=0):
     except ValueError:
         raise ValueError(f"Invalid gpuid '{gpuid}'. Expected 'acc', 'cpu', or an integer.")
 
+@torch.compiler.disable
 def vprint(*args, verbose=True, **kwargs):
     """Verbose print/logging with individual control, only for rank 0 in DDP."""
     if verbose and (not dist.is_available() or not dist.is_initialized() or dist.get_rank() == 0):
@@ -548,6 +549,7 @@ def get_time(time_format: Union[bool, str, None] = 'date') -> str:
     except ValueError as e:
         raise ValueError(f"Invalid time format string: {fmt!r}") from e
 
+@torch.compiler.disable
 def time_sync():
     # PyTorch doesn't have a direct exposed API to check the selected default device 
     # so we'll be checking these .is_available() just to prevent error.

@@ -420,6 +420,7 @@ def plot_probe_modes(init_probe, opt_probe, amp_or_phase='amplitude', real_or_fo
     if pass_fig:
         return fig
 
+@torch.compiler.disable
 def plot_summary(output_path, model, niter, indices, init_variables, selected_figs=['loss', 'forward', 'probe_r_amp', 'probe_k_amp', 'probe_k_phase', 'pos'], collate_str='', show_fig=True, save_fig=False, verbose=True):
     """ Wrapper function for most visualization function """
     # selected_figs can take 'loss', 'forward', 'probe_r_amp', 'probe_k_amp', 'probe_k_phase', 'pos', 'tilt', or 'all'

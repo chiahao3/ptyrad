@@ -551,6 +551,7 @@ def copy_params_to_dir(params_path, output_dir, params=None, verbose=True):
         vprint(" ")
         vprint("### Warning: No params file found and no params dictionary provided. Skipping. ###", verbose=verbose)
 
+@torch.compiler.disable
 def save_results(output_path, model, params, optimizer, niter, indices, batch_losses, collate_str=''):
     
     save_result_list = params['recon_params'].get('save_result', ['model', 'obj', 'probe'])

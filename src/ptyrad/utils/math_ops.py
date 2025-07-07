@@ -9,6 +9,19 @@ import numpy as np
 import torch
 
 
+def torch_phasor(phase):
+    """
+    Creates a complex tensor with unit magnitude using the phase.
+
+    Args:
+        phase (torch.Tensor): phase angle for the exp(i*theta)
+        
+    Note:
+        This util function is created so torch.compile can properly handle complex tensors,
+        because torch.exp(1j*phase) involves the 1j which is actually a Python built-in that can't be traced.
+    """
+    return torch.polar(torch.ones_like(phase), phase)
+    
 def exponential_decay(r, a, b):
     return a * np.exp(-b * r)
 
