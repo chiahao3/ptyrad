@@ -719,8 +719,6 @@ class Initializer:
         else:
             raise ValueError(f"Unsupported measurement source '{meas_source}'. Use 'custom' or 'file'.")
         
-        meas = meas.astype('float32')
-        vprint("Casting measurements dtype to float32 (single precision) for computational efficiency.")
         vprint(f"Imported meausrements shape / dtype = {meas.shape}, dtype = {meas.dtype}", verbose=self.verbose)
         vprint(f"Imported meausrements int. statistics (min, mean, max) = ({meas.min():.4f}, {meas.mean():.4f}, {meas.max():.4f})", verbose=self.verbose)
         return meas
@@ -767,6 +765,9 @@ class Initializer:
 
         # Final guard on negative values
         meas = self._meas_remove_neg_values(meas, {'mode': 'clip_neg'})
+        
+        # Final guard on meas dtype
+        meas = meas.astype(self.init_params.get('meas_dtype', 'float32')) # Default float32
         
         return meas
     
@@ -966,8 +967,10 @@ class Initializer:
             raise ValueError(f"Unsupported normalization mode '{norm_mode}'. Use 'max_at_one', 'mean_at_one', 'sum_to_one', or 'divide_const'.")
 
         # Normalize the measurements
-        meas = meas / normalization_const
-        meas = meas.astype('float32')
+        meas = meas.astype(self.init_params.get('meas_dtype', 'float32')) # float32 as default
+        normalization_const = normalization_const.astype(self.init_params.get('meas_dtype', 'float32')) # float32 as default
+        meas /= normalization_const 
+        vprint(f"meausrements shape / dtype = {meas.shape}, dtype = {meas.dtype}", verbose=self.verbose)
         vprint(f"meausrements int. statistics (min, mean, max) = ({meas.min():.4f}, {meas.mean():.4f}, {meas.max():.4f})", verbose=self.verbose)
 
         return meas
@@ -1101,7 +1104,10 @@ class Initializer:
 
         if mode == 'precompute':
             zoom_factors = np.array([1.0, *scale_factors]) # scipy.ndimage.zoom applies to all axes.
-            meas = zoom(meas, zoom_factors, order=1) # bilinear (order=1) could prevent overshooting. Resampling would change the meas.sum(), but we have normalization at the end of the process.
+            if meas.dtype == 'float16':
+                meas = zoom(meas.astype('float32'), zoom_factors, order=1).astype('float16')
+            else:
+                meas = zoom(meas, zoom_factors, order=1) # bilinear (order=1) could prevent overshooting. Resampling would change the meas.sum(), but we have normalization at the end of the process.
             Npix = meas.shape[-1] # Update Npix
             self.init_variables['on_the_fly_meas_scale_factors'] = None
 
@@ -1133,7 +1139,10 @@ class Initializer:
         vprint(f"Adding source size (partial spatial coherence) of Gaussian blur std = {source_size_std_px:.4f} scan_step sizes or {source_size_std_ang:.4f} Ang to measurements along the scan directions", verbose=self.verbose)
 
         # Apply blur over scan dimensions (0,1)
-        meas = gaussian_filter(meas, sigma=source_size_std_px, axes=(0,1)) # Partial spatial coherence is approximated by mixing DPs at nearby probe positions
+        if meas.dtype == 'float16':
+            meas = gaussian_filter(meas.astype('float32'), sigma=source_size_std_px, axes=(0,1)).astype('float16') # scipy doesn't support float16
+        else:
+            meas = gaussian_filter(meas, sigma=source_size_std_px, axes=(0,1)) # Partial spatial coherence is approximated by mixing DPs at nearby probe positions
         meas = meas.reshape(-1, meas.shape[-2], meas.shape[-1])
         vprint(f"Reshape measurements back to (N, ky, kx) = {meas.shape}", verbose=self.verbose)
         
@@ -1147,7 +1156,10 @@ class Initializer:
         if detector_blur_std_px is None or detector_blur_std_px == 0:
             return meas
         
-        meas = gaussian_filter(meas, sigma=detector_blur_std_px, axes=(-2,-1)) # Detector blur is essentially the Gaussian blur along ky, kx
+        if meas.dtype == 'float16':
+            meas = gaussian_filter(meas.astype('float32'), sigma=detector_blur_std_px, axes=(-2,-1)).astype('float16') # scipy doesn't support float16
+        else:
+            meas = gaussian_filter(meas, sigma=detector_blur_std_px, axes=(-2,-1)) # Detector blur is essentially the Gaussian blur along ky, kx
         vprint(f"Adding detector blur (point-spread function of the detector) of Gaussian blur std = {detector_blur_std_px:.4f} px to measurements along the ky, kx directions", verbose=self.verbose)
         
         return meas
@@ -1184,24 +1196,25 @@ class Initializer:
         else:
             raise ValueError(f"Unsupported unit for Poisson noise: '{unit}'. Use 'total_e_per_pattern' or 'e_per_Ang2'.")
 
+        total_electron = np.array(total_electron, dtype=meas.dtype)
         vprint(f"total electron per measurement = dose x scan_step_size^2 = {dose:.3f}(e-/Ang^2) x {scan_step_size:.3f}(Ang)^2 = {total_electron:.3f}", verbose=self.verbose)
 
         # Normalize meas to sum to ~ 1 before applying Poisson noise
         vprint(f"Before applying Poisson noise: meausrements int. statistics (min, mean, max) = ({meas.min():.4f}, {meas.mean():.5f}, {meas.max():.4f})", verbose=self.verbose)
         
-        normalization_const = meas.sum() / meas.shape[0]
+        normalization_const = meas.mean(0).astype('float32').sum() # Keep normalization constant at float32 to prevent overflow because float16 has maximum value only at 6.55E4
         vprint(f"Normalization constant = {normalization_const:.4f}, this makes each measurement sum to ~ 1.", verbose=self.verbose)
         
-        meas = meas / normalization_const # Make each slice of the meas to sum to ~ 1. A global normalization constant keeps the relative intensity.
+        meas /= normalization_const # Make each slice of the meas to sum to ~ 1. A global normalization constant keeps the relative intensity.
         vprint(f"After applying normalization: meausrements int. statistics (min, mean, max) = ({meas.min():.4f}, {meas.mean():.5f}, {meas.max():.4f})", verbose=self.verbose)
         vprint(f"Mean total electron per pattern = meas.sum((-2,-1)).mean(0) = ({meas.sum((-2,-1)).mean(0):.5f})", verbose=self.verbose)
 
         set_random_seed(seed=self.random_seed)
-        meas = np.random.poisson(meas * total_electron)
+        meas = np.random.poisson(meas * total_electron) # poisson returns int32
         vprint(f"Adding Poisson noise with a total electron per diffraction pattern of {int(total_electron)}", verbose=self.verbose)
         vprint(f"After applying Poisson noise: meausrements int. statistics (min, mean, max) = ({meas.min():.4f}, {meas.mean():.5f}, {meas.max():.4f})", verbose=self.verbose)
 
-        meas = meas * normalization_const / total_electron # Un-normalize meas back to the original scale
+        meas = (meas * normalization_const / total_electron).astype(self.init_params.get('meas_dtype', 'float32')) # Un-normalize meas back to the original scale
         vprint(f"After un-normalizing back to original scale: meausrements int. statistics (min, mean, max) = ({meas.min():.4f}, {meas.mean():.5f}, {meas.max():.4f})", verbose=self.verbose)
         
         return meas
