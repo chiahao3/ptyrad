@@ -767,7 +767,9 @@ class Initializer:
         meas = self._meas_remove_neg_values(meas, {'mode': 'clip_neg'})
         
         # Final guard on meas dtype
-        meas = meas.astype(self.init_params.get('meas_dtype', 'float32')) # Default float32
+        target_dtype = np.dtype(self.init_params.get('meas_dtype', 'float32')) # Default float32
+        if meas.dtype != target_dtype:
+            meas = meas.astype(target_dtype, copy=False)
         
         return meas
     
