@@ -113,8 +113,8 @@ class Initializer:
         meas = self._load_meas()
         meas = self._process_meas(meas)
 
-        meas_avg = meas.mean(0) # This is equivalent to PACBED in electron microscopy. Note that if pad/resample are set to "on_the_fly", this would be different from the final one used for reconstruction.
-        meas_avg_sum = meas_avg.sum() # This is the total integrated intensity of the averaged diffraction pattern
+        meas_avg = np.mean(meas, axis=0, dtype=np.float32) # This is equivalent to PACBED in electron microscopy. Note that if pad/resample are set to "on_the_fly", this would be different from the final one used for reconstruction.
+        meas_avg_sum = np.sum(meas_avg, dtype=np.float32) # This is the total integrated intensity of the averaged diffraction pattern and is used during probe initialization / normalization
         
         pad_mode = get_nested(self.init_params, key=['meas_pad', 'mode'], safe=True, default=None)
         if pad_mode == 'on_the_fly':
