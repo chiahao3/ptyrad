@@ -768,8 +768,7 @@ class Initializer:
         
         # Final guard on meas dtype
         target_dtype = np.dtype(self.init_params.get('meas_dtype', 'float32')) # Default float32
-        if meas.dtype != target_dtype:
-            meas = meas.astype(target_dtype, copy=False)
+        meas = meas.astype(target_dtype, copy=False) # Skip if dtype = target_dtype, otherwise astype will make a copy
         
         return meas
     
@@ -948,15 +947,15 @@ class Initializer:
         vprint(f"Normalizing measurements with mode = '{norm_mode}' and value = '{norm_const}'", verbose=self.verbose)
 
         if norm_mode == 'max_at_one':
-            normalization_const = meas.mean(0).max()
+            normalization_const = np.mean(meas, axis=0, dtype=np.float32).max()
             vprint(f"Normalizing by max of the 2D mean pattern intensity: {normalization_const:.8g}", verbose=self.verbose)
 
         elif norm_mode == 'mean_at_one':
-            normalization_const = meas.mean(0).mean()
+            normalization_const = np.mean(meas, axis=0, dtype=np.float32).mean()
             vprint(f"Normalizing by mean of the 2D mean pattern intensity: {normalization_const:.8g}", verbose=self.verbose)
 
         elif norm_mode == 'sum_to_one':
-            normalization_const = meas.mean(0).sum()
+            normalization_const = np.mean(meas, axis=0, dtype=np.float32).sum()
             vprint(f"Normalizing by sum of the 2D mean pattern intensity: {normalization_const:.8g}", verbose=self.verbose)
 
         elif norm_mode == 'divide_const':
@@ -969,8 +968,9 @@ class Initializer:
             raise ValueError(f"Unsupported normalization mode '{norm_mode}'. Use 'max_at_one', 'mean_at_one', 'sum_to_one', or 'divide_const'.")
 
         # Normalize the measurements
-        meas = meas.astype(self.init_params.get('meas_dtype', 'float32')) # float32 as default
-        normalization_const = normalization_const.astype(self.init_params.get('meas_dtype', 'float32')) # float32 as default
+        target_dtype = np.dtype(self.init_params.get('meas_dtype', 'float32')) # float32 as default
+        meas = meas.astype(target_dtype, copy=False) # Skip if dtype = target_dtype, otherwise astype will make a copy
+        normalization_const = normalization_const.astype(target_dtype, copy=False)
         meas /= normalization_const 
         vprint(f"meausrements shape / dtype = {meas.shape}, dtype = {meas.dtype}", verbose=self.verbose)
         vprint(f"meausrements int. statistics (min, mean, max) = ({meas.min():.4f}, {meas.mean():.4f}, {meas.max():.4f})", verbose=self.verbose)
@@ -1204,7 +1204,7 @@ class Initializer:
         # Normalize meas to sum to ~ 1 before applying Poisson noise
         vprint(f"Before applying Poisson noise: meausrements int. statistics (min, mean, max) = ({meas.min():.4f}, {meas.mean():.5f}, {meas.max():.4f})", verbose=self.verbose)
         
-        normalization_const = meas.mean(0).astype('float32').sum() # Keep normalization constant at float32 to prevent overflow because float16 has maximum value only at 6.55E4
+        normalization_const = np.mean(meas, axis=0, dtype=np.float32).sum() # Keep normalization constant at float32 to prevent overflow because float16 has maximum value only at 6.55E4
         vprint(f"Normalization constant = {normalization_const:.4f}, this makes each measurement sum to ~ 1.", verbose=self.verbose)
         
         meas /= normalization_const # Make each slice of the meas to sum to ~ 1. A global normalization constant keeps the relative intensity.
