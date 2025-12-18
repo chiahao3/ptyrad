@@ -379,45 +379,47 @@ def sort_by_mode_int(modes):
 
 def orthogonalize_modes_vec(modes, sort=False):
     """
-    正交化模态：优先 EVD(A = M M^H) + 抖动稳定；失败则回退 SVD(M)。
-    modes: (Nmode, Ny, Nx) 复数张量
-    返回: 形状同 modes
+    Orthogonalize modes: prefer EVD (A = M M^H) with jitter stabilization;
+    fall back to SVD(M) if EVD fails.
+    modes: (Nmode, Ny, Nx) complex tensor
+    return: same shape as modes
     """
     orig_dtype = modes.dtype
-    # 确保是复数计算（半精度/混合精度下易炸，显式关闭 AMP 更稳）
+    # Ensure complex computation (half / mixed precision can be unstable;
+    # explicitly disabling AMP here is more robust)
     if not torch.is_complex(modes):
         modes = modes.to(torch.complex64)
 
-    with torch.no_grad():  # 这步通常是约束/投影，禁用梯度更省事
+    with torch.no_grad():   # This is typically a constraint/projection; disabling gradients is simpler and cheaper
         input_shape = modes.shape
         Nmode = input_shape[0]
         M = modes.reshape(Nmode, -1)  # (N, K)
         dev, dt = M.device, M.dtype
-
-        # 快速健康检查与清理
+        # Quick sanity check and cleanup
         if not torch.isfinite(torch.view_as_real(M)).all():
             Mr = torch.nan_to_num(M.real)
             Mi = torch.nan_to_num(M.imag)
             M = Mr + 1j * Mi
-
-        # ---------- 路线 1：EVD(A = M M^H) 带抖动 ----------
+        # ---------- Path 1: EVD (A = M M^H) with jitter ----------
         A = M @ M.conj().T                           # (N, N) PSD
-        A = 0.5 * (A + A.conj().T)                  # 强制厄米化，抑制数值不对称
+        A = 0.5 * (A + A.conj().T)                  # Enforce Hermitian symmetry to suppress numerical asymmetry
 
-        # 自适应抖动大小：取对角平均的量级，防止全零/极小尺度时过小
+        # Adaptive jitter scale: use mean diagonal magnitude to avoid too small values
+        # in all-zero or extremely small-scale cases
         if Nmode > 0:
             scale = A.diagonal().abs().mean().clamp_min(1.0).item()
         else:
             scale = 1.0
-        # 根据精度选 epsilon 级别
+        # Choose epsilon level based on precision
         base_eps = 1e-6 if dt in (torch.complex64, torch.float32) else 1e-12
         jitter0 = base_eps * scale
         I = torch.eye(Nmode, dtype=dt, device=dev)
 
-        # 多次重试 + 必要时 CPU 回退（有些后端/驱动对病态矩阵更挑）
+        # Multiple retries with increasing jitter; fall back to CPU if necessary
+        # (some backends/drivers are more sensitive to ill-conditioned matrices)
         eigh_ok = False
         last_err = None
-        for k in range(4):  # jitter, 10x 递增
+        for k in range(4):  # jitter increases by 10x each retry
             try:
                 w, U = torch.linalg.eigh(A + (10.0**k) * jitter0 * I, UPLO='U')
                 eigh_ok = True
@@ -426,7 +428,7 @@ def orthogonalize_modes_vec(modes, sort=False):
                 last_err = e
 
         if not eigh_ok:
-            # 尝试 CPU（有时更稳），最后再放弃
+           # Try CPU (sometimes more stable), then give up
             try:
                 w, U = torch.linalg.eigh(A.to('cpu') + jitter0 * torch.eye(Nmode, dtype=dt, device='cpu'), UPLO='U')
                 U = U.to(dev)
@@ -437,30 +439,31 @@ def orthogonalize_modes_vec(modes, sort=False):
                 eigh_ok = False
 
         if eigh_ok:
-            # 可选：按特征值从大到小排序，以能量高的在前
+             # Optional: sort eigenvalues in descending order so higher-energy modes come first
             if sort:
                 idx = torch.argsort(w.real, descending=True)
                 U = U[:, idx]
-            # 旋转到特征向量基底：U^H M  => 行两两正交
+             # Rotate into the eigenvector basis: U^H M => rows are mutually orthogonal
             Mortho = U.conj().T @ M
             ortho_modes = Mortho.reshape_as(modes)
         else:
-            # ---------- 路线 2：SVD 回退，更稳 ----------
-            # M = U Σ V^H；用 U^H M = Σ V^H（行正交，行范数=Σ）
+            # ---------- Path 2: SVD fallback (more robust) ----------
+            # M = U Σ V^H; using U^H M = Σ V^H
+            # Rows are orthogonal, with row norms equal to Σ
             U, S, Vh = torch.linalg.svd(M, full_matrices=False)
             Mortho = U.conj().T @ M
             ortho_modes = Mortho.reshape_as(modes)
             if sort:
-                # 按奇异值从大到小
+                # Sort by singular values in descending order
                 idx = torch.argsort(S.real, descending=True)
                 ortho_modes = ortho_modes[idx]
 
-        # 如果你已有自定义排序方式，继续沿用
+        # If a custom sorting function is available, continue to use it
         if sort and 'sort_by_mode_int' in globals():
             try:
                 ortho_modes = sort_by_mode_int(ortho_modes)
             except Exception:
-                # 如果自定义排序失败，至少保证按能量/奇异值的排序已有
+                # If custom sorting fails, at least keep energy/singular-value ordering
                 pass
 
         return ortho_modes.to(orig_dtype)
