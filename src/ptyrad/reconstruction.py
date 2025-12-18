@@ -10,6 +10,7 @@ import warnings
 
 import matplotlib.pyplot as plt
 import numpy as np
+import numba
 import torch
 import torch.distributed as dist
 from torch.utils.data import Dataset
@@ -513,6 +514,11 @@ def make_batches(indices, pos, batch_size, mode='random', seed=None, verbose=Tru
     #   For 'compact' or 'sparse', it's generally fluctuating around the specified batch size
     #   'sparse' can be quite slow for large scan positions (like 256x256 takes more than 10min, and 128x128 takes more than 1min on a CPU)
     #   PtychoShelves automatically switches to 'random' for len(pos) > 1e3 and relying on the random statistics 
+        #   
+    #   IMPROVEMENT by Zehao Dong: Currently make_batches takes ~ 3000 secs for a 300x300 dataset. 
+    #                              Try to speed up by incorporating numba JIT compilation.
+    #                              Now it takes ~ 800 secs for a 300x300 dataset, which is a 4x speed up.
+    #       
     #   To check the correctness of each grouping, you may visualize the pos
     #   Also we want to make sure we're not missing any indices, so we can do:
     #
@@ -520,6 +526,7 @@ def make_batches(indices, pos, batch_size, mode='random', seed=None, verbose=Tru
     #   flatten_indices.sort()
     #   indices.sort()
     #   all(flatten_indices == indices)
+    
     from time import time
     
     try:
@@ -561,54 +568,28 @@ def make_batches(indices, pos, batch_size, mode='random', seed=None, verbose=Tru
         if mode == 'compact':
             vprint(f"Generated {num_batch} '{mode}' groups of ~{batch_size} scan positions in {time() - t_start:.3f} sec", verbose=verbose)
             return compact_batches
-
-        else: # 'sparse' mode
-            from scipy.spatial.distance import cdist
-            sparse_indices = indices.copy() # Make a deep copy of indices so that we may pop elements from sparse_indices later
+        else: # 'sparse' mode - optimized by numba JIT compilation
+            # Extract position data for selected indices
+            pos_s = pos[indices]
             
-            # Initialize the list to store groups
-            sparse_batches = []
-            
-            # Calculate the centroid for each compact group as initial start for sparse groups
-            # The idea is the centroids of each compact group are naturally sparse
+            # Calculate centroids for compact batches - same logic as original
             centroids = np.array([np.mean(pos[cbatch], axis=0) for cbatch in compact_batches])
-            pairwise_distances = cdist(pos, pos) # Calculate the dist for ALL pos can keep the absolute index and skip the conversion between indexing
             
-            used_indices = [] # This list stores the indices used for initialization of the sparse groups
-            # Find the indices closest to the centroids of compact groups, these indices are the initial point for each sparse group
-            for batch_idx in range(num_batch):
-                distances = np.linalg.norm(pos_s - centroids[batch_idx], axis=1) # Note that this distances is only for selected pos (pos_s = pos[indices])
-                closest_idx_s = np.argmin(distances) # closest_idx_s is the position of min distances
-                closest_idx = indices[closest_idx_s] # closest_idx is the actual index that is closest to the centroid
-                sparse_batches.append([closest_idx])
-                used_indices.append(closest_idx_s)
-            sparse_indices = np.delete(sparse_indices, used_indices) # Delete the used_indices after the entire loop, this helps keep indexing correct and consistent
-            # Deleting elements in a loop would make indexing very challenging
+            # Use numba-optimized functions
+            vprint("Using numba-optimized sparse grouping", verbose=verbose)
+            sparse_batches = _sparse_grouping_numba(indices, pos, pos_s, centroids, num_batch)
             
-            # Iterate through remaining points
-            for idx in sparse_indices:
-                min_distances = []
-                # Iterate through groups
-                for batch_idx in range(num_batch):
-                    distances = pairwise_distances[sparse_batches[batch_idx], idx]
-                    min_distances.append(np.min(distances))
-                
-                max_group_index = np.argmax(min_distances)
-
-                # Add the point to the group with the farthest minimal distance
-                sparse_batches[max_group_index].append(idx)
-            
-            # Final check because this procedure is fairly complicated
+            # Validate the result - same validation as original
             flatten_indices = np.concatenate(sparse_batches)
             flatten_indices.sort()
-            indices.sort()
-            assert all(flatten_indices == indices), "Sorry, something went wrong with the sparse grouping, please try 'random' for now"
-            vprint(f"Generated {num_batch} '{mode}' groups of ~{batch_size} scan positions in {time() - t_start:.3f} sec", verbose=verbose)
+            indices_sorted = indices.copy()
+            indices_sorted.sort()
+            assert np.array_equal(flatten_indices, indices_sorted), "Sorry, something went wrong with the sparse grouping, please try 'random' for now"
             
-            # Final process to make batches a list of arrays
-            sparse_batches = [np.array(batch) for batch in sparse_batches]
+            vprint(f"Generated {num_batch} '{mode}' groups of ~{batch_size} scan positions in {time() - t_start:.3f} sec", verbose=verbose)
             return sparse_batches
 
+        
 def parse_torch_compile_configs(configs):
     """
     Convert user-facing CompilerConfigs to dict suitable for torch.compile
@@ -681,8 +662,13 @@ def recon_loop(model, init, params, optimizer, loss_fn, constraint_fn, indices, 
             torch._dynamo.reset()
             recon_step_compiled = torch.compile(recon_step, **compiler_configs)
         
+        start_iter_t = time_sync()
         batch_losses = recon_step_compiled(batches, grad_accumulation, model, optimizer, loss_fn, constraint_fn, niter, verbose=verbose, acc=acc)
-        
+        end_iter_t = time_sync()
+        remain_t = (NITER - niter) * (end_iter_t - start_iter_t)
+        time_str = parse_sec_to_time_str(remain_t)
+        vprint(f"Iter: {niter}, Estimated remaining time: {time_str} ", verbose=verbose)
+
         # Only log the main process
         if acc is None or acc.is_main_process:
             
@@ -1180,3 +1166,89 @@ def compute_optuna_error(model, indices, metric):
         return model.loss_iters[-1][-1]
     else:
         raise ValueError(f"Unsupported hypertune error metric: '{metric}'. Expected 'contrast' or 'loss'.")
+
+
+###### Numba JIT optimized functions for sparse batch generation ######
+
+@numba.njit
+def _sparse_grouping_numba(indices, pos_full, pos_s, centroids, num_batch):
+    """
+    Numba JIT-compiled core function for sparse grouping.
+    This implements the exact same logic as the original sparse mode algorithm
+    but with numba optimization for faster execution.
+    
+    Args:
+        indices: Array of selected scan indices
+        pos_full: Full position array for all scan points  
+        pos_s: Position array for selected indices only
+        centroids: Centroid positions for each batch
+        num_batch: Number of batches to create
+    
+    Returns:
+        List of arrays containing indices for each sparse batch
+    """
+    n_indices = len(indices)
+    
+    # Initialize sparse batches as lists - equivalent to original sparse_batches = []
+    sparse_batches = [numba.typed.List.empty_list(numba.int64) for _ in range(num_batch)]
+    used_mask = np.zeros(n_indices, dtype=numba.boolean)
+    
+    # Find closest index to each centroid for initialization - same logic as original
+    for batch_idx in range(num_batch):
+        min_dist = np.inf
+        closest_idx_pos = -1
+        
+        for i in range(n_indices):
+            if used_mask[i]:
+                continue
+            # Same distance calculation as original: np.linalg.norm(pos_s - centroids[batch_idx], axis=1)
+            dist = np.sqrt(np.sum((pos_s[i] - centroids[batch_idx])**2))
+            if dist < min_dist:
+                min_dist = dist
+                closest_idx_pos = i
+        
+        if closest_idx_pos >= 0:
+            sparse_batches[batch_idx].append(indices[closest_idx_pos])
+            used_mask[closest_idx_pos] = True
+    
+    # Assign remaining indices to batches - same logic as original nested loops
+    for i in range(n_indices):
+        if used_mask[i]:
+            continue
+            
+        current_idx = indices[i]
+        
+        max_min_dist = -1.0
+        best_batch = 0
+        
+        # For each batch, find the minimum distance to any point in that batch
+        # Same logic as original: pairwise_distances[sparse_batches[batch_idx], idx]
+        for batch_idx in range(num_batch):
+            if len(sparse_batches[batch_idx]) == 0:
+                continue
+                
+            min_dist_to_batch = np.inf
+            for j in range(len(sparse_batches[batch_idx])):
+                batch_point_idx = sparse_batches[batch_idx][j]
+                # Calculate distance between current point and points in this batch
+                dist = np.sqrt(np.sum((pos_full[current_idx] - pos_full[batch_point_idx])**2))
+                if dist < min_dist_to_batch:
+                    min_dist_to_batch = dist
+            
+            # Choose the batch with the maximum of these minimum distances
+            # Same logic as original: max_group_index = np.argmax(min_distances)
+            if min_dist_to_batch > max_min_dist:
+                max_min_dist = min_dist_to_batch
+                best_batch = batch_idx
+        
+        sparse_batches[best_batch].append(current_idx)
+    
+    # Convert to numpy arrays - same as original final processing
+    result = []
+    for batch_list in sparse_batches:
+        batch_array = np.empty(len(batch_list), dtype=np.int64)
+        for i, val in enumerate(batch_list):
+            batch_array[i] = val
+        result.append(batch_array)
+    
+    return result

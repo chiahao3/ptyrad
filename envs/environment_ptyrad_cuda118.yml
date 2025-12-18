@@ -16,5 +16,6 @@ dependencies:
   - scipy
   - tifffile
   - torchvision
+  - numba
 
 # Capping at 2nd newest versions of Python and PyTorch as of 2025.05.19 just to be preventive.
