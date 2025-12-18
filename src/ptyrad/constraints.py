@@ -339,43 +339,134 @@ def sort_by_mode_int(modes):
     modes = modes[indices]
     return modes
 
-def orthogonalize_modes_vec(modes, sort = False):
-    ''' orthogonalize the modes using SVD'''
-    # Input:
-    #   modes: input function with multiple modes
-    # Output:
-    #   ortho_modes: 
-    # Note:
-    #   This function is a highly vectorized PyTorch implementation of `ptycho\+core\probe_modes_ortho.m` from PtychoShelves
-    #   It's numerically equivalent with the following for-loop version but is ~ 10x faster on small complex64 tensors (10,164,164) 
-    #   Most indexings arr converted from Matlab (start from 1) to Python (start from 0)
-    #   The expected shape of `modes` input is modified into (pmode, Ny, Nx) to be consistent with ptyrad
-    #   If you check the orthoganality of each mode, make sure to change the input into complex128 or to modify the default tolerance of torch.allclose.
-    #   Note that Matlab's dot(p2,p1) for complex input would implictly apply with the complex conjugate, 
-    #   so Matlab's dot() != torch.dot because torch.dot doesn't automatically apply the complex conjugate.
-    #   This is pointed out by @dong-zehao in issue #11.
+# def orthogonalize_modes_vec(modes, sort = False):
+#     ''' orthogonalize the modes using SVD'''
+#     # Input:
+#     #   modes: input function with multiple modes
+#     # Output:
+#     #   ortho_modes: 
+#     # Note:
+#     #   This function is a highly vectorized PyTorch implementation of `ptycho\+core\probe_modes_ortho.m` from PtychoShelves
+#     #   It's numerically equivalent with the following for-loop version but is ~ 10x faster on small complex64 tensors (10,164,164) 
+#     #   Most indexings arr converted from Matlab (start from 1) to Python (start from 0)
+#     #   The expected shape of `modes` input is modified into (pmode, Ny, Nx) to be consistent with ptyrad
+#     #   If you check the orthoganality of each mode, make sure to change the input into complex128 or to modify the default tolerance of torch.allclose.
+#     #   Note that Matlab's dot(p2,p1) for complex input would implictly apply with the complex conjugate, 
+#     #   so Matlab's dot() != torch.dot because torch.dot doesn't automatically apply the complex conjugate.
+#     #   This is pointed out by @dong-zehao in issue #11.
         
-    orig_modes_dtype = modes.dtype
-    if orig_modes_dtype != torch.complex64:
-        modes = torch.complex(modes, torch.zeros_like(modes))
-    input_shape = modes.shape
-    modes_reshaped = modes.reshape(input_shape[0], -1) # Reshape modes to have a shape of (Nmode, X*Y)
-    A = torch.matmul(modes_reshaped, modes_reshaped.H) # A = M @ M^T.conj() = M @ M^H, H is the conjugate transpose
+#     orig_modes_dtype = modes.dtype
+#     if orig_modes_dtype != torch.complex64:
+#         modes = torch.complex(modes, torch.zeros_like(modes))
+#     input_shape = modes.shape
+#     modes_reshaped = modes.reshape(input_shape[0], -1) # Reshape modes to have a shape of (Nmode, X*Y)
+#     A = torch.matmul(modes_reshaped, modes_reshaped.H) # A = M @ M^T.conj() = M @ M^H, H is the conjugate transpose
 
-    if A.device.type == 'mps': # Temporary hack because PyTorch MPS backend doesn't seem to implement linalg.eig yet.
-        _, evecs = torch.linalg.eig(A.to('cpu'))
-        evecs = evecs.to('mps')
-    else:
-        _, evecs = torch.linalg.eig(A)
+#     if A.device.type == 'mps': # Temporary hack because PyTorch MPS backend doesn't seem to implement linalg.eig yet.
+#         _, evecs = torch.linalg.eig(A.to('cpu'))
+#         evecs = evecs.to('mps')
+#     else:
+#         _, evecs = torch.linalg.eig(A)
    
-    # Matrix-multiplication version (N,N) @ (N,YX) = (N,YX)
-    ortho_modes = torch.matmul(evecs.H, modes_reshaped).reshape(input_shape)
+#     # Matrix-multiplication version (N,N) @ (N,YX) = (N,YX)
+#     ortho_modes = torch.matmul(evecs.H, modes_reshaped).reshape(input_shape)
 
-    # sort modes by their contribution
-    if sort:
-        ortho_modes = sort_by_mode_int(ortho_modes)
+#     # sort modes by their contribution
+#     if sort:
+#         ortho_modes = sort_by_mode_int(ortho_modes)
         
-    return ortho_modes.to(orig_modes_dtype)
+#     return ortho_modes.to(orig_modes_dtype)
+
+def orthogonalize_modes_vec(modes, sort=False):
+    """
+    Orthogonalize modes: prefer EVD (A = M M^H) with jitter stabilization;
+    fall back to SVD(M) if EVD fails.
+    modes: (Nmode, Ny, Nx) complex tensor
+    return: same shape as modes
+    """
+    orig_dtype = modes.dtype
+    # Ensure complex computation (half / mixed precision can be unstable;
+    # explicitly disabling AMP here is more robust)
+    if not torch.is_complex(modes):
+        modes = modes.to(torch.complex64)
+
+    with torch.no_grad():   # This is typically a constraint/projection; disabling gradients is simpler and cheaper
+        input_shape = modes.shape
+        Nmode = input_shape[0]
+        M = modes.reshape(Nmode, -1)  # (N, K)
+        dev, dt = M.device, M.dtype
+        # Quick sanity check and cleanup
+        if not torch.isfinite(torch.view_as_real(M)).all():
+            Mr = torch.nan_to_num(M.real)
+            Mi = torch.nan_to_num(M.imag)
+            M = Mr + 1j * Mi
+        # ---------- Path 1: EVD (A = M M^H) with jitter ----------
+        A = M @ M.conj().T                           # (N, N) PSD
+        A = 0.5 * (A + A.conj().T)                  # Enforce Hermitian symmetry to suppress numerical asymmetry
+
+        # Adaptive jitter scale: use mean diagonal magnitude to avoid too small values
+        # in all-zero or extremely small-scale cases
+        if Nmode > 0:
+            scale = A.diagonal().abs().mean().clamp_min(1.0).item()
+        else:
+            scale = 1.0
+        # Choose epsilon level based on precision
+        base_eps = 1e-6 if dt in (torch.complex64, torch.float32) else 1e-12
+        jitter0 = base_eps * scale
+        I = torch.eye(Nmode, dtype=dt, device=dev)
+
+        # Multiple retries with increasing jitter; fall back to CPU if necessary
+        # (some backends/drivers are more sensitive to ill-conditioned matrices)
+        eigh_ok = False
+        last_err = None
+        for k in range(4):  # jitter increases by 10x each retry
+            try:
+                w, U = torch.linalg.eigh(A + (10.0**k) * jitter0 * I, UPLO='U')
+                eigh_ok = True
+                break
+            except Exception as e:
+                last_err = e
+
+        if not eigh_ok:
+           # Try CPU (sometimes more stable), then give up
+            try:
+                w, U = torch.linalg.eigh(A.to('cpu') + jitter0 * torch.eye(Nmode, dtype=dt, device='cpu'), UPLO='U')
+                U = U.to(dev)
+                w = w.to(dev)
+                eigh_ok = True
+            except Exception as e:
+                last_err = e
+                eigh_ok = False
+
+        if eigh_ok:
+             # Optional: sort eigenvalues in descending order so higher-energy modes come first
+            if sort:
+                idx = torch.argsort(w.real, descending=True)
+                U = U[:, idx]
+             # Rotate into the eigenvector basis: U^H M => rows are mutually orthogonal
+            Mortho = U.conj().T @ M
+            ortho_modes = Mortho.reshape_as(modes)
+        else:
+            # ---------- Path 2: SVD fallback (more robust) ----------
+            # M = U Σ V^H; using U^H M = Σ V^H
+            # Rows are orthogonal, with row norms equal to Σ
+            U, S, Vh = torch.linalg.svd(M, full_matrices=False)
+            Mortho = U.conj().T @ M
+            ortho_modes = Mortho.reshape_as(modes)
+            if sort:
+                # Sort by singular values in descending order
+                idx = torch.argsort(S.real, descending=True)
+                ortho_modes = ortho_modes[idx]
+
+        # If a custom sorting function is available, continue to use it
+        if sort and 'sort_by_mode_int' in globals():
+            try:
+                ortho_modes = sort_by_mode_int(ortho_modes)
+            except Exception:
+                # If custom sorting fails, at least keep energy/singular-value ordering
+                pass
+
+        return ortho_modes.to(orig_dtype)
 
 def kr_filter(obj, radius, width):
     ''' Apply kr_filter using the 2D sigmoid filter '''
