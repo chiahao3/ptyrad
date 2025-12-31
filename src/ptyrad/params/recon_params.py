@@ -127,19 +127,24 @@ class ReconParams(BaseModel):
     or use `grad_accumulation` to split a batch into multiple sub-batches for 1 update.
     """
     
-    GROUP_MODE: Literal["random", "sparse", "compact"] = Field(
+    GROUP_MODE: Literal["random", "sparse", "compact", "hilbert", "fps"] = Field(
         default="random", description="Spatial distribution of probe positions in a batch"
     )
     """
     Group mode determines the spatial distribution of the selected probe positions within a batch (group), 
     this is similar to the 'MLs' for 'sparse' and 'MLc' for 'compact' in PtychoShelves. 
-    Available options are 'random', 'sparse', and 'compact'. 
+    Available options are 'random', 'sparse', 'compact', 'hilbert', and 'fps'. 
     Usually 'random' is good enough with small batch sizes and is the suggested option for most cases. 
     'compact' is believed to provide best final quality, although it's converging much slower. 
     'sparse' gives the most uniform coverage on the object so converges the fastest, 
     and is also preferred for reconstructions with few scan positions to prevent any locally biased update. 
-    However, 'sparse' for 256x256 scan could take more than 10 mins on CPU just to compute the grouping, 
-    hence PtychoShelves automatically switches to 'random' for Nscans > 1e3. 
+    Since generating sparse grouping can be computationally expensive (a few minutes with 256x256 scan),
+    PtyRAD provides 2 methods for sparse grouping,
+    (1) 'fps' (Farthest Point Sampling) gives highest quality groups but is slower, or
+    (2) 'hilbert' (Hilbert Curve Sorting) produces good quality groups within 0.5 sec and is fastest with O(N).
+    These methods can be explictly chosen, or use 'sparse' to automatically select them based on the number of probe positions.
+    'fps' is chosen for datasets with less than 256x256 scan pattern.
+    Note that PtychoShelves automatically switches from 'sparse' to 'random' for Nscans > 1e3. 
     The grouping in PtyRAD is fixed during optimization, but the order between each group is shuffled for every iteration.
     """
     
