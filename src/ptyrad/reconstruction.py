@@ -541,8 +541,7 @@ def make_batches(indices, pos, batch_size, mode='random', seed=None, verbose=Tru
         rng = np.random.default_rng(seed=seed)
         shuffled_indices = rng.permutation(indices)           # This will make a shuffled copy    
         random_batches = np.array_split(shuffled_indices, num_batch)
-        vprint(f"Generated {num_batch} '{mode}' groups of ~{batch_size} scan positions in {time() - t_start:.3f} sec", verbose=verbose)
-        return random_batches
+        output_batches = random_batches
         
     else: # Either 'compact' or 'sparse'
         # Choose the selected pos from indices
@@ -559,8 +558,7 @@ def make_batches(indices, pos, batch_size, mode='random', seed=None, verbose=Tru
             compact_batches.append(indices[batch_indices_s])
 
         if mode == 'compact':
-            vprint(f"Generated {num_batch} '{mode}' groups of ~{batch_size} scan positions in {time() - t_start:.3f} sec", verbose=verbose)
-            return compact_batches
+            output_batches = compact_batches
 
         else: # 'sparse' mode
             from scipy.spatial.distance import cdist
@@ -598,16 +596,17 @@ def make_batches(indices, pos, batch_size, mode='random', seed=None, verbose=Tru
                 # Add the point to the group with the farthest minimal distance
                 sparse_batches[max_group_index].append(idx)
             
-            # Final check because this procedure is fairly complicated
-            flatten_indices = np.concatenate(sparse_batches)
-            flatten_indices.sort()
-            indices.sort()
-            assert all(flatten_indices == indices), "Sorry, something went wrong with the sparse grouping, please try 'random' for now"
-            vprint(f"Generated {num_batch} '{mode}' groups of ~{batch_size} scan positions in {time() - t_start:.3f} sec", verbose=verbose)
-            
             # Final process to make batches a list of arrays
-            sparse_batches = [np.array(batch) for batch in sparse_batches]
-            return sparse_batches
+            output_batches = [np.array(batch) for batch in sparse_batches]
+            
+    # Final check
+    flatten_indices = np.concatenate(output_batches)
+    flatten_indices.sort()
+    indices.sort()
+    assert all(flatten_indices == indices), "Sorry, something went wrong with the sparse grouping, please try 'random' for now"
+    vprint(f"Generated {num_batch} '{mode}' groups of ~{batch_size} scan positions in {time() - t_start:.3f} sec", verbose=verbose)
+
+    return output_batches
 
 def parse_torch_compile_configs(configs):
     """
