@@ -537,73 +537,40 @@ def make_batches(indices, pos, batch_size, mode='random', seed=None, verbose=Tru
 
     num_batch = len(indices) // batch_size   
     t_start = time()
-    if mode == 'random':
-        rng = np.random.default_rng(seed=seed)
-        shuffled_indices = rng.permutation(indices)           # This will make a shuffled copy    
-        random_batches = np.array_split(shuffled_indices, num_batch)
-        output_batches = random_batches
-        
-    else: # Either 'compact' or 'sparse'
-        # Choose the selected pos from indices
-        pos_s = pos[indices]
-        # Kmeans for clustering
-        kmeans = MiniBatchKMeans(init="k-means++", n_init=10, n_clusters=num_batch, max_iter=10, batch_size=3072, random_state=seed)
+
+    # Choose grouping methods
+    if mode == 'compact':
+        pos_s = pos[indices] # Choose the selected pos from indices
+        kmeans = MiniBatchKMeans(init="k-means++", n_init=10, n_clusters=num_batch, max_iter=10, batch_size=3072, random_state=seed) # Kmeans for clustering
         kmeans.fit(pos_s)
         labels = kmeans.labels_
         
         # Separate data points into groups
-        compact_batches = []
+        output_batches = []
         for batch_idx in range(num_batch):
             batch_indices_s = np.where(labels == batch_idx)[0]
-            compact_batches.append(indices[batch_indices_s])
+            output_batches.append(indices[batch_indices_s])
+    
+    elif mode == 'sparse':
+        pass
 
-        if mode == 'compact':
-            output_batches = compact_batches
-
-        else: # 'sparse' mode
-            from scipy.spatial.distance import cdist
-            sparse_indices = indices.copy() # Make a deep copy of indices so that we may pop elements from sparse_indices later
-            
-            # Initialize the list to store groups
-            sparse_batches = []
-            
-            # Calculate the centroid for each compact group as initial start for sparse groups
-            # The idea is the centroids of each compact group are naturally sparse
-            centroids = np.array([np.mean(pos[cbatch], axis=0) for cbatch in compact_batches])
-            pairwise_distances = cdist(pos, pos) # Calculate the dist for ALL pos can keep the absolute index and skip the conversion between indexing
-            
-            used_indices = [] # This list stores the indices used for initialization of the sparse groups
-            # Find the indices closest to the centroids of compact groups, these indices are the initial point for each sparse group
-            for batch_idx in range(num_batch):
-                distances = np.linalg.norm(pos_s - centroids[batch_idx], axis=1) # Note that this distances is only for selected pos (pos_s = pos[indices])
-                closest_idx_s = np.argmin(distances) # closest_idx_s is the position of min distances
-                closest_idx = indices[closest_idx_s] # closest_idx is the actual index that is closest to the centroid
-                sparse_batches.append([closest_idx])
-                used_indices.append(closest_idx_s)
-            sparse_indices = np.delete(sparse_indices, used_indices) # Delete the used_indices after the entire loop, this helps keep indexing correct and consistent
-            # Deleting elements in a loop would make indexing very challenging
-            
-            # Iterate through remaining points
-            for idx in sparse_indices:
-                min_distances = []
-                # Iterate through groups
-                for batch_idx in range(num_batch):
-                    distances = pairwise_distances[sparse_batches[batch_idx], idx]
-                    min_distances.append(np.min(distances))
-                
-                max_group_index = np.argmax(min_distances)
-
-                # Add the point to the group with the farthest minimal distance
-                sparse_batches[max_group_index].append(idx)
-            
-            # Final process to make batches a list of arrays
-            output_batches = [np.array(batch) for batch in sparse_batches]
-            
+    elif mode == 'fps':
+        pass
+    
+    elif mode == 'hilbert':
+        pass
+    
+    else: # random
+        rng = np.random.default_rng(seed=seed)
+        shuffled_indices = rng.permutation(indices) # This will make a shuffled copy    
+        random_batches = np.array_split(shuffled_indices, num_batch)
+        output_batches = random_batches
+    
     # Final check
     flatten_indices = np.concatenate(output_batches)
     flatten_indices.sort()
     indices.sort()
-    assert all(flatten_indices == indices), "Sorry, something went wrong with the sparse grouping, please try 'random' for now"
+    assert all(flatten_indices == indices), f"Sorry, something went wrong with the '{mode}' grouping, please try 'random' instead"
     vprint(f"Generated {num_batch} '{mode}' groups of ~{batch_size} scan positions in {time() - t_start:.3f} sec", verbose=verbose)
 
     return output_batches
