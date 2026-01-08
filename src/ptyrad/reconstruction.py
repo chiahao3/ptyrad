@@ -499,34 +499,223 @@ def select_scan_indices(N_scan_slow, N_scan_fast, subscan_slow=None, subscan_fas
         
     return indices
 
+def remap_batches_to_global(local_batches, global_lookup):
+    """
+    Maps batch indices from a local subset coordinate system back to the global coordinate system.
+    
+    Args:
+        local_batches (list of arrays): The output from the sampler (indices 0..M-1).
+        global_lookup (np.ndarray): The actual global indices corresponding to the subset (values 0..N-1).
+                                    This is your original 'indices' array.
+    
+    Returns:
+        list of np.ndarrays: Batches containing the global indices.
+    """
+    # Ensure global_lookup is a numpy array for advanced indexing
+    if not isinstance(global_lookup, np.ndarray):
+        global_lookup = np.array(global_lookup)
+
+    global_batches = []
+    for batch in local_batches:
+        # NumPy magic: Using a list/array of integers to index an array 
+        # returns the values at those positions.
+        # e.g. if global_lookup = [10, 20, 30] and batch = [0, 2], result is [10, 30]
+        mapped_batch = global_lookup[batch]
+        global_batches.append(mapped_batch)
+        
+    return global_batches
+
+def get_hilbert_key(p, resolution=16):
+    """
+    Calculates the Hilbert curve integer index for a single normalized point.
+    Uses bitwise operations to traverse the recursive quadrants.
+    """
+    # 1. Discretize: Scale continuous [0,1] coords to integer grid [0, 2^n - 1]
+    limit = 2**resolution - 1
+    x = int(p[0] * limit)
+    y = int(p[1] * limit)
+    
+    d = 0 # The running 1D distance (Hilbert index)
+    s = 2**(resolution - 1) # Start with the largest quadrant size
+    
+    # 2. Iteratively determine which quadrant the point is in
+    while s > 0:
+        # Check if x or y is in the upper half of the current quadrant size 's'
+        rx = 1 if (x & s) > 0 else 0
+        ry = 1 if (y & s) > 0 else 0
+        
+        # Add the distance for the quadrant we are in.
+        # (3 * rx) ^ ry maps the (rx, ry) coords to the order (0, 1, 2, 3)
+        d += s * s * ((3 * rx) ^ ry)
+        
+        # 3. Rotate/Flip: Hilbert curves require rotation when entering specific quadrants
+        # If we are in the 'bottom-left' or 'bottom-right' relative to parent...
+        if ry == 0:
+            if rx == 1:
+                # Flip coordinates for the symmetric quadrant
+                x = limit - x
+                y = limit - y
+            
+            # Swap x and y (Rotation)
+            x, y = y, x
+        
+        s //= 2 # Descend to next level of detail
+        
+    return d
+
+def sparse_sampler_hilbert(points, n_groups, resolution=16):
+    """
+    Splits 2D points into G groups using Hilbert Curve sorting to ensure 
+    spatial stratification (hyperuniformity) within each group.
+
+    Mechanism:
+      1. Map continuous (x, y) coordinates to a discrete 1D Hilbert integer index.
+      2. Sort points by this 1D index to group spatially local points together.
+      3. Use strided indexing (modulo arithmetic) to peel off layers, ensuring 
+         that consecutive points in a group are distant in 2D space.
+
+    Args:
+        points (np.ndarray): (N, 2) array of coordinates.
+        n_groups (int): Number of desired groups (mini-batches).
+        resolution (int): Grid resolution order. n=16 creates a 65536x65536 grid, 
+                          sufficient for most float precision needs.
+
+    Returns:
+        list[np.ndarray[int]]: A list of G arrays, where each inner array contains indices.
+    """
+
+    # Normalization to [0,1]
+    p_min = points.min(0)
+    p_max = points.max(0)
+    norm_p = (points - p_min) / (p_max - p_min + 1e-9) # prevents index out-of-bounds for the exact max value.
+
+    # Calculate the 1D Hilbert index (key) for every point
+    keys = [get_hilbert_key(p, resolution) for p in norm_p]
+    
+    # Get indices that sort the points along the curve
+    sorted_idx = np.argsort(keys)
+
+    # Picking every G-th point guarantees they are far apart in the group.
+    groups = [[] for _ in range(n_groups)]
+    
+    for i, original_idx in enumerate(sorted_idx):
+        group_id = i % n_groups
+        groups[group_id].append(original_idx)
+    
+    # Final type cleaning: Turn it into list of array of int
+    groups = [np.int64(group) for group in groups]
+    
+    return groups
+
+def sparse_sampler_fps(points, n_groups, seed=None):
+    """
+    Splits 2D points into G groups using Farthest Point Sampling (FPS) to ensure 
+    maximum spatial separation (hyperuniformity) within each group.
+
+    Mechanism:
+      1. Maintains a distance cache `dist_caches` of shape (G, N), where entry [g, i] 
+         is the distance from point i to the nearest existing member of group g.
+      2. Iteratively selects the point with the maximum distance value for the current 
+         target group (greedy maximin strategy).
+      3. Marks selected points as "visited" globally by setting their distance to -1.0 
+         in the cache, ensuring sampling without replacement.
+
+    Args:
+        points (np.ndarray): (N, 2) array of coordinates.
+        n_groups (int): Number of desired groups (mini-batches).
+
+    Returns:
+        list[np.ndarray[int]]: A list of G arrays, where each inner array contains indices.
+    """
+    N = len(points)
+    points = points.astype(np.float32) # Cast to float32 to reduce memory footprint and increase cache locality
+    
+    groups = [[] for _ in range(n_groups)]
+    
+    # Initialize distance matrix with Infinity. 
+    dist_caches = np.full((n_groups, N), np.inf, dtype=np.float32)
+    
+    # Seed Group 0 with a random starting point
+    np.random.seed(seed)
+    first_idx = np.random.randint(0, N)
+    groups[0].append(first_idx)
+    
+    # Update Group 0's distance cache based on this seed
+    dists = np.linalg.norm(points - points[first_idx], axis=1)
+    dist_caches[0] = np.minimum(dist_caches[0], dists)
+    
+    # Mark the seed as visited globally (for ALL groups) so no other group picks it
+    # We use -1.0 as a flag for "visited" points to avoid managing a separate boolean mask.
+    dist_caches[:, first_idx] = -1.0 
+
+    # Initialize Groups 1..G by picking points farthest from Group 0's set.
+    # This heuristic separates the starting seeds of different groups.
+    for g in range(1, n_groups):
+        # Find the point farthest from Group 0
+        # (argmax ignores -1.0 as long as positive distances exist)
+        farthest_idx = np.argmax(dist_caches[0])
+        groups[g].append(farthest_idx)
+        
+        # Update distances for the current group
+        d_new = np.linalg.norm(points - points[farthest_idx], axis=1)
+        dist_caches[g] = np.minimum(dist_caches[g], d_new)
+        
+        # Mark as visited globally
+        dist_caches[:, farthest_idx] = -1.0
+
+    # Iteratively assign remaining points to groups in a round-robin fashion.
+    count = n_groups
+    
+    while count < N:
+        g = count % n_groups
+        
+        # Select the available point farthest from the current members of group g
+        next_idx = np.argmax(dist_caches[g])
+        groups[g].append(next_idx)
+        
+        # Calculate distances from the new point to all other points
+        d_new = np.linalg.norm(points - points[next_idx], axis=1)
+        
+        # Update this group's minimal distance cache
+        # Note: If a point 'k' is already visited, dist_caches[g, k] is -1.0.
+        # np.minimum(-1.0, d_new) remains -1.0, preserving the visited state.
+        dist_caches[g] = np.minimum(dist_caches[g], d_new)
+        
+        # Mark the new point as visited for ALL groups
+        dist_caches[:, next_idx] = -1.0
+        
+        count += 1
+    
+    # Final type cleaning: Turn it into list of array of int
+    groups = [np.int64(group) for group in groups]
+    
+    return groups
+
 def make_batches(indices, pos, batch_size, mode='random', seed=None, verbose=True):
     ''' Make batches from input indices '''
     # Input:
     #   indices: int, (Ns,) array. indices could be a subset of all indices.
     #   pos: int/float (N,2) array. Always pass in the full positions.
     #   batch_size: int. The number of indices of each mini-batch
-    #   mode: str. Choose between 'random', 'compact', or 'sparse' grouping.
+    #   mode: str. Choose between 'random', 'compact', or 'sparse' grouping. Explicit sparse sampling methods 'hilbert' and 'fps' can be passed in as well.
     # Output:
     #   batches: A list of `num_batch` arrays, or [batch0, batch1, ...]
     # Note:
     #   The actual batch size would only be "close" if it's not divisible by len(indices) for 'random' grouping
     #   For 'compact' or 'sparse', it's generally fluctuating around the specified batch size
-    #   'sparse' can be quite slow for large scan positions (like 256x256 takes more than 10min, and 128x128 takes more than 1min on a CPU)
-    #   PtychoShelves automatically switches to 'random' for len(pos) > 1e3 and relying on the random statistics 
-    #   To check the correctness of each grouping, you may visualize the pos
-    #   Also we want to make sure we're not missing any indices, so we can do:
-    #
-    #   flatten_indices = np.concatenate(batches)
-    #   flatten_indices.sort()
-    #   indices.sort()
-    #   all(flatten_indices == indices)
+    #   'sparse' grouping can be relatively slow for large scan positions, hence 2 methods are provided in PtyRAD.
+    #     - fps: Farthest Point Sampling gives highest quality hyperuniform points with O(N^2) complexity, 128x128 scan takes around 8 sec, 256x256 takes ~ 110 sec with batch size = 32.
+    #     - hilbert: Hilbert curve sorting gives good quality hyperuniform points with O(N) complexity, 128x128 scan takes around 0.14 sec, 256x256 takes ~ 0.5 sec with batch size = 32.
+    #   If 'sparse' is chosen, it will automatically select suitable methods based on len(indices)
+    #   In PtychoShelves, MLs (sparse grouping) automatically switches to 'random' for len(pos) > 1e3 to reduce the processing time 
+
     from time import time
     
     try:
         from sklearn.cluster import MiniBatchKMeans
     except ImportError as e:
         missing_package = str(e).split()[-1]
-        vprint(f"### {missing_package} is not available, group mode set to 'random'. 'scikit-learn' is needed for 'sparse' and 'compact' ###")
+        vprint(f"### {missing_package} is not available, group mode set to 'random'. 'scikit-learn' is needed for 'compact' grouping ###")
         mode = 'random'
         
     if len(indices) > len(pos):
@@ -537,77 +726,55 @@ def make_batches(indices, pos, batch_size, mode='random', seed=None, verbose=Tru
 
     num_batch = len(indices) // batch_size   
     t_start = time()
-    if mode == 'random':
-        rng = np.random.default_rng(seed=seed)
-        shuffled_indices = rng.permutation(indices)           # This will make a shuffled copy    
-        random_batches = np.array_split(shuffled_indices, num_batch)
-        vprint(f"Generated {num_batch} '{mode}' groups of ~{batch_size} scan positions in {time() - t_start:.3f} sec", verbose=verbose)
-        return random_batches
-        
-    else: # Either 'compact' or 'sparse'
-        # Choose the selected pos from indices
-        pos_s = pos[indices]
-        # Kmeans for clustering
-        kmeans = MiniBatchKMeans(init="k-means++", n_init=10, n_clusters=num_batch, max_iter=10, batch_size=3072, random_state=seed)
+
+    # Choose grouping methods
+    if mode == 'compact':
+        pos_s = pos[indices] # Choose the selected pos from indices
+        kmeans = MiniBatchKMeans(init="k-means++", n_init=10, n_clusters=num_batch, max_iter=10, batch_size=3072, random_state=seed) # Kmeans for clustering
         kmeans.fit(pos_s)
         labels = kmeans.labels_
         
         # Separate data points into groups
-        compact_batches = []
+        output_batches = []
         for batch_idx in range(num_batch):
             batch_indices_s = np.where(labels == batch_idx)[0]
-            compact_batches.append(indices[batch_indices_s])
+            output_batches.append(indices[batch_indices_s])
+    
+    elif mode in ['sparse', 'fps', 'hilbert']:
+        pos_s = pos[indices] # Choose the selected pos from indices
 
-        if mode == 'compact':
-            vprint(f"Generated {num_batch} '{mode}' groups of ~{batch_size} scan positions in {time() - t_start:.3f} sec", verbose=verbose)
-            return compact_batches
+        if mode == 'sparse':
+            if len(indices) <= 65536:
+                method = 'fps' # fps with 256x256 scan and batch size 32 takes ~ 120 sec on CPU, and scales as O(N^2)
+            else:
+                method = 'hilbert' # hilbert with 256x256 scan and batch size 32 takes ~ 0.50 sec on CPU, and scales as O(N)
+            vprint(f"len(indices) = {len(indices)}, '{method}' is automatically selected for sparse grouping.")
+        else:
+            # explicit user request
+            method = mode
 
-        else: # 'sparse' mode
-            from scipy.spatial.distance import cdist
-            sparse_indices = indices.copy() # Make a deep copy of indices so that we may pop elements from sparse_indices later
+        if method == 'fps':
+            output_batches = sparse_sampler_fps(pos_s, num_batch, seed=seed)
+        elif method == 'hilbert':
+            output_batches = sparse_sampler_hilbert(pos_s, num_batch, resolution=16)
             
-            # Initialize the list to store groups
-            sparse_batches = []
-            
-            # Calculate the centroid for each compact group as initial start for sparse groups
-            # The idea is the centroids of each compact group are naturally sparse
-            centroids = np.array([np.mean(pos[cbatch], axis=0) for cbatch in compact_batches])
-            pairwise_distances = cdist(pos, pos) # Calculate the dist for ALL pos can keep the absolute index and skip the conversion between indexing
-            
-            used_indices = [] # This list stores the indices used for initialization of the sparse groups
-            # Find the indices closest to the centroids of compact groups, these indices are the initial point for each sparse group
-            for batch_idx in range(num_batch):
-                distances = np.linalg.norm(pos_s - centroids[batch_idx], axis=1) # Note that this distances is only for selected pos (pos_s = pos[indices])
-                closest_idx_s = np.argmin(distances) # closest_idx_s is the position of min distances
-                closest_idx = indices[closest_idx_s] # closest_idx is the actual index that is closest to the centroid
-                sparse_batches.append([closest_idx])
-                used_indices.append(closest_idx_s)
-            sparse_indices = np.delete(sparse_indices, used_indices) # Delete the used_indices after the entire loop, this helps keep indexing correct and consistent
-            # Deleting elements in a loop would make indexing very challenging
-            
-            # Iterate through remaining points
-            for idx in sparse_indices:
-                min_distances = []
-                # Iterate through groups
-                for batch_idx in range(num_batch):
-                    distances = pairwise_distances[sparse_batches[batch_idx], idx]
-                    min_distances.append(np.min(distances))
-                
-                max_group_index = np.argmax(min_distances)
+        if len(indices) < len(pos): # If a subset of indices was used (i.e., INDICES_MODE != 'full'), map the output indices back
+            output_batches = remap_batches_to_global(output_batches, global_lookup=indices)
+    
+    else: # random
+        rng = np.random.default_rng(seed=seed)
+        shuffled_indices = rng.permutation(indices) # This will make a shuffled copy    
+        random_batches = np.array_split(shuffled_indices, num_batch)
+        output_batches = random_batches
+    
+    # Final check
+    flatten_indices = np.concatenate(output_batches)
+    flatten_indices.sort()
+    indices.sort()
+    assert all(flatten_indices == indices), f"Sorry, something went wrong with the '{mode}' grouping, please try 'random' instead"
+    vprint(f"Generated {num_batch} '{mode}' groups of ~{batch_size} scan positions in {time() - t_start:.3f} sec", verbose=verbose)
 
-                # Add the point to the group with the farthest minimal distance
-                sparse_batches[max_group_index].append(idx)
-            
-            # Final check because this procedure is fairly complicated
-            flatten_indices = np.concatenate(sparse_batches)
-            flatten_indices.sort()
-            indices.sort()
-            assert all(flatten_indices == indices), "Sorry, something went wrong with the sparse grouping, please try 'random' for now"
-            vprint(f"Generated {num_batch} '{mode}' groups of ~{batch_size} scan positions in {time() - t_start:.3f} sec", verbose=verbose)
-            
-            # Final process to make batches a list of arrays
-            sparse_batches = [np.array(batch) for batch in sparse_batches]
-            return sparse_batches
+    return output_batches
 
 def parse_torch_compile_configs(configs):
     """
