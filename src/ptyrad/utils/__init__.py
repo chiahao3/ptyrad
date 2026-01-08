@@ -54,8 +54,10 @@ from .image_proc import (  # noqa: F401
 )
 from .math_ops import (  # noqa: F401
     compose_affine_matrix,
+    dct_2d,
     exponential_decay,
     fftshift2,
+    idct_2d,
     ifftshift2,
     make_gaussian_mask,
     make_sigmoid_mask,

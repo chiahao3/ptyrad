@@ -74,6 +74,16 @@ class KzFilter(BaseModel):
     alpha: float = Field(default=1.0, ge=0.0, description="Lateral Fourier filtering constant")
 
 
+class KrThresh(BaseModel):
+    model_config = {"extra": "forbid"}
+    
+    start_iter: Optional[int] = Field(default=None, ge=1, description="Start iteration of applying freq threshold constraint")
+    step: Optional[int] = Field(default=1, ge=1, description="Interval of iterations of applying freq threshold constraint")
+    end_iter: Optional[int] = Field(default=None, ge=1, description="End iteration of applying freq threshold constraint")
+    obj_type: Literal["amplitude", "phase", "both"] = Field(default="both", description="Object type for filter")
+    thresh: float = Field(default=0.05, gt=0.0, le=1, description="Threshold ratio for spatial frequencies to keep")
+
+
 class ComplexRatio(BaseModel):
     model_config = {"extra": "forbid"}
     
@@ -246,6 +256,18 @@ class ConstraintParams(BaseModel):
     because 'kz_filter' would introduce intermixing between the top and bottom layer due to the periodic boundary condition of Fourier transform. 
     Another solution to the intermixing is to pad vacuum layers to your object and remove them later, 
     although padding extensive vacuum layers tend to make object phase bleed into the vacuum layers and it's very hard to set the interface
+    """
+    
+    kr_thresh: KrThresh = Field(default_factory=KrThresh, description="kr threshold for object")
+    """
+    Apply a thresholding to supress weak spatial frequency coefficients of the object along "lateral" (i.e., x, y) directions. 
+    'thresh' is the ratio of spatial frequencies to keep and thresh is within (0,1]. 
+    Typical 'thresh' value is 0.1, meaning keeping 10% of the strongest spatial frequencies and set the others to 0. 
+    Smaller 'thresh' value will promote sparsity in frequency domain (implemented with DCT) and produce a smoother object with reduced noise. 
+    Note that this constraint would also reduce / remove the disorder in periodic objects like strain and atomic defects as it only keep the strong spatial frequencies,
+    so it's advised to only use it for purely amorphous specimen, low dose reconstructions, or as an initial stabilizing constraint. 
+    The DCT is applied to the last 2 dimensions for object array shaped (...,H,W), hence the regularization effect is only within 2D and is sequentially repeated for each depth slice.
+    See https://doi.org/10.1364/OE.551986 for example on low dose biological samples.    
     """
     
     complex_ratio: ComplexRatio = Field(

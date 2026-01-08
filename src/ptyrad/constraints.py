@@ -9,8 +9,10 @@ from torch.nn.functional import interpolate
 from torchvision.transforms.functional import gaussian_blur
 
 from ptyrad.utils import (
+    dct_2d,
     fftshift2,
     gaussian_blur_1d,
+    idct_2d,
     ifftshift2,
     make_sigmoid_mask,
     near_field_evolution_torch,
@@ -171,6 +173,20 @@ class CombinedConstraint(torch.nn.Module):
                 model.opt_objp.data = kz_filter(model.opt_objp, beta_regularize_layers, alpha_gaussian, obj_type='phase')
                 vprint(f"Apply kz_filter constraint with beta = {beta_regularize_layers} on objp at iter {niter}", verbose=self.verbose)
     
+    def apply_kr_thresh(self, model, niter):
+        ''' Apply kr threshold constraint on object '''
+
+        if self._should_apply_at_iter('kr_thresh', niter):
+            obj_type         = self.constraint_params['kr_thresh']['obj_type']
+            thresh           = self.constraint_params['kr_thresh']['thresh']
+            
+            if obj_type in ['amplitude', 'both']:
+                model.opt_obja.data = dct_threshold_filter(model.opt_obja, threshold_ratio=thresh).contiguous()
+                vprint(f"Apply kr_filter constraint with threshold = {thresh} (ratio of spatial frequencies to keep) on obja at iter {niter}", verbose=self.verbose)
+            if obj_type in ['phase', 'both']:
+                model.opt_objp.data = dct_threshold_filter(model.opt_objp, threshold_ratio=thresh).contiguous()
+                vprint(f"Apply kr_filter constraint with threshold = {thresh} (ratio of spatial frequencies to keep) on objp at iter {niter}", verbose=self.verbose)
+    
     def apply_complex_ratio(self, model, niter):
         ''' Apply complex constraint on object '''
         # Original paper seems to apply this constraint at each position. I'll try an iteration-wise constraint first
@@ -322,6 +338,7 @@ class CombinedConstraint(torch.nn.Module):
             self.apply_obj_zblur     (model, niter)
             self.apply_kr_filter     (model, niter)
             self.apply_kz_filter     (model, niter)
+            self.apply_kr_thresh     (model, niter)
             self.apply_complex_ratio (model, niter)
             self.apply_mirrored_amp  (model, niter)
             self.apply_obj_z_recenter(model, niter)
@@ -376,6 +393,51 @@ def orthogonalize_modes_vec(modes, sort = False):
         ortho_modes = sort_by_mode_int(ortho_modes)
         
     return ortho_modes.to(orig_modes_dtype)
+
+def dct_threshold_filter(
+    x: torch.Tensor,
+    threshold_ratio: float = 0.05,
+) -> torch.Tensor:
+    """Applies hard-threshold filtering in the DCT domain.
+
+    Keeps only the largest-magnitude DCT coefficients according to
+    ``threshold_ratio`` and zeros out the rest.
+
+    Works for any input shape (..., H, W).
+
+    Args:
+        x (torch.Tensor): Input real-valued tensor of shape (..., H, W).
+        threshold_ratio (float): Fraction of coefficients to keep. Must be in
+            [0, 1]. For example, 0.05 retains the top 5% coefficients.
+
+    Returns:
+        torch.Tensor: Filtered tensor of same shape as ``x``.
+
+    Raises:
+        ValueError: If ``threshold_ratio`` is not in [0, 1].
+    """
+    if not (0.0 <= threshold_ratio <= 1.0):
+        raise ValueError("threshold_ratio must be between 0 and 1.")
+
+    # Compute DCT
+    dct = dct_2d(x)
+
+    # Flatten all but keep batch shape implicit
+    dct_abs = dct.abs()
+    flat = dct_abs.reshape(-1)
+
+    # Determine number of coefficients to keep
+    k = max(1, int(threshold_ratio * flat.numel()))
+
+    # kth largest = (N-k+1)-th smallest
+    kth = torch.kthvalue(flat, flat.numel() - k + 1).values
+
+    # Hard thresholding
+    mask = dct_abs >= kth
+    dct_filtered = dct * mask
+
+    # Inverse DCT
+    return idct_2d(dct_filtered)
 
 def kr_filter(obj, radius, width):
     ''' Apply kr_filter using the 2D sigmoid filter '''

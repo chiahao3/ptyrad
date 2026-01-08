@@ -219,3 +219,83 @@ def get_decomposed_affine_matrix_from_bases(input, output):
         return (scale, asymmetry, rotation, shear)
     else:
         raise ValueError("Optimization failed")
+
+# DCT/iDCT    
+def dct_2d(x: torch.Tensor) -> torch.Tensor:
+    """Computes a 2D DCT-II (orthonormalized except for constant factors) using FFT.
+
+    Supports arbitrary batch dimensions. The DCT is applied over the last two
+    dimensions (H, W).
+
+    Args:
+        x (torch.Tensor): Real-valued input tensor of shape (..., H, W).
+
+    Returns:
+        torch.Tensor: DCT coefficients of shape (..., H, W).
+    """
+    H, W = x.shape[-2:]
+
+    # --- DCT along height (dim = -2) ---
+    x_ext_h = torch.cat([x, x.flip(dims=[-2])], dim=-2)  # (..., 2H, W)
+    X_h = torch.fft.fft(x_ext_h, dim=-2)
+
+    n_h = torch.arange(H, device=x.device)
+    scale_h = torch.exp(-1j * torch.pi * n_h / (2 * H))   # (H,)
+    dct_h = (X_h[..., :H, :] * scale_h[:, None]).real * 2
+
+    # --- DCT along width (dim = -1) ---
+    x_ext_w = torch.cat([dct_h, dct_h.flip(dims=[-1])], dim=-1)  # (..., H, 2W)
+    X_w = torch.fft.fft(x_ext_w, dim=-1)
+
+    n_w = torch.arange(W, device=x.device)
+    scale_w = torch.exp(-1j * torch.pi * n_w / (2 * W))   # (W,)
+    dct_2d = (X_w[..., :W] * scale_w).real * 2
+
+    return dct_2d
+
+def idct_2d(x: torch.Tensor) -> torch.Tensor:
+    """Computes a 2D inverse DCT-II (IDCT) using FFT.
+
+    The inverse restores a real-valued signal and supports arbitrary batch
+    dimensions.
+
+    Args:
+        x (torch.Tensor): DCT coefficients of shape (..., H, W).
+
+    Returns:
+        torch.Tensor: Reconstructed signal of shape (..., H, W).
+    """
+    H, W = x.shape[-2:]
+    X = x.to(torch.complex64)
+
+    # --- Undo width scaling ---
+    n_w = torch.arange(W, device=x.device)
+    scale_w = torch.exp(1j * torch.pi * n_w / (2 * W))
+
+    Xw = X * scale_w / 2
+
+    # Symmetric extension for width
+    # Conjugate mirror excluding the DC term
+    Xw_ext = torch.cat(
+        [Xw, Xw[..., 1:].flip(dims=[-1]).conj()],
+        dim=-1
+    )  # (..., H, 2W)
+
+    # IFFT along width
+    x_w = torch.fft.ifft(Xw_ext, dim=-1)[..., :W].real
+
+    # --- Undo height scaling ---
+    n_h = torch.arange(H, device=x.device)
+    scale_h = torch.exp(1j * torch.pi * n_h / (2 * H))
+
+    Xh = x_w.to(torch.complex64) * scale_h[:, None] / 2
+
+    # Symmetric extension for height
+    Xh_ext = torch.cat(
+        [Xh, Xh[..., 1:, :].flip(dims=[-2]).conj()],
+        dim=-2
+    )  # (..., 2H, W)
+
+    # IFFT along height
+    out = torch.fft.ifft(Xh_ext, dim=-2)[..., :H, :].real
+    return out

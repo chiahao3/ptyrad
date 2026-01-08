@@ -399,6 +399,12 @@ def make_output_folder(
             beta = constraint_params["kz_filter"]["beta"]
             parts.append(f"{kz_str}f{beta}")
 
+        if constraint_params["kr_thresh"]["start_iter"] is not None:
+            obj_type = constraint_params["kr_thresh"]["obj_type"]
+            krt_str = {"both": "krt", "amplitude": "krta", "phase": "krtp"}.get(obj_type)
+            thresh = constraint_params["kr_thresh"]["thresh"]
+            parts.append(f"{krt_str}{thresh}")
+
         if (
             constraint_params["obj_rblur"]["start_iter"] is not None
             and constraint_params["obj_rblur"]["std"] != 0
