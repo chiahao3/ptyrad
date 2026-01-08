@@ -113,8 +113,8 @@ class Initializer:
         meas = self._load_meas()
         meas = self._process_meas(meas)
 
-        meas_avg = meas.mean(0) # This is equivalent to PACBED in electron microscopy. Note that if pad/resample are set to "on_the_fly", this would be different from the final one used for reconstruction.
-        meas_avg_sum = meas_avg.sum() # This is the total integrated intensity of the averaged diffraction pattern
+        meas_avg = np.mean(meas, axis=0, dtype=np.float32) # This is equivalent to PACBED in electron microscopy. Note that if pad/resample are set to "on_the_fly", this would be different from the final one used for reconstruction.
+        meas_avg_sum = np.sum(meas_avg, dtype=np.float32) # This is the total integrated intensity of the averaged diffraction pattern and is used during probe initialization / normalization
         
         pad_mode = get_nested(self.init_params, key=['meas_pad', 'mode'], safe=True, default=None)
         if pad_mode == 'on_the_fly':
@@ -718,9 +718,10 @@ class Initializer:
 
         else:
             raise ValueError(f"Unsupported measurement source '{meas_source}'. Use 'custom' or 'file'.")
+
+        vprint(f"Original measurements dtype is {meas.dtype}, casting to float32 (single precision) for computational efficiency.")
+        meas = meas.astype('float32', copy=False)
         
-        meas = meas.astype('float32')
-        vprint("Casting measurements dtype to float32 (single precision) for computational efficiency.")
         vprint(f"Imported meausrements shape / dtype = {meas.shape}, dtype = {meas.dtype}", verbose=self.verbose)
         vprint(f"Imported meausrements int. statistics (min, mean, max) = ({meas.min():.4f}, {meas.mean():.4f}, {meas.max():.4f})", verbose=self.verbose)
         return meas
@@ -767,6 +768,9 @@ class Initializer:
 
         # Final guard on negative values
         meas = self._meas_remove_neg_values(meas, {'mode': 'clip_neg'})
+        
+        # Final guard on meas dtype
+        meas = meas.astype('float32', copy=False) # Skip if dtype = 'float32', otherwise astype will make a copy
         
         return meas
     
@@ -945,15 +949,15 @@ class Initializer:
         vprint(f"Normalizing measurements with mode = '{norm_mode}' and value = '{norm_const}'", verbose=self.verbose)
 
         if norm_mode == 'max_at_one':
-            normalization_const = meas.mean(0).max()
+            normalization_const = np.mean(meas, axis=0, dtype=np.float32).max()
             vprint(f"Normalizing by max of the 2D mean pattern intensity: {normalization_const:.8g}", verbose=self.verbose)
 
         elif norm_mode == 'mean_at_one':
-            normalization_const = meas.mean(0).mean()
+            normalization_const = np.mean(meas, axis=0, dtype=np.float32).mean()
             vprint(f"Normalizing by mean of the 2D mean pattern intensity: {normalization_const:.8g}", verbose=self.verbose)
 
         elif norm_mode == 'sum_to_one':
-            normalization_const = meas.mean(0).sum()
+            normalization_const = np.mean(meas, axis=0, dtype=np.float32).sum()
             vprint(f"Normalizing by sum of the 2D mean pattern intensity: {normalization_const:.8g}", verbose=self.verbose)
 
         elif norm_mode == 'divide_const':
@@ -966,8 +970,9 @@ class Initializer:
             raise ValueError(f"Unsupported normalization mode '{norm_mode}'. Use 'max_at_one', 'mean_at_one', 'sum_to_one', or 'divide_const'.")
 
         # Normalize the measurements
-        meas = meas / normalization_const
-        meas = meas.astype('float32')
+        meas /= normalization_const 
+        meas = meas.astype('float32', copy=False) # Skip if dtype = 'float32', otherwise astype will make a copy
+        vprint(f"meausrements shape / dtype = {meas.shape}, dtype = {meas.dtype}", verbose=self.verbose)
         vprint(f"meausrements int. statistics (min, mean, max) = ({meas.min():.4f}, {meas.mean():.4f}, {meas.max():.4f})", verbose=self.verbose)
 
         return meas
@@ -1192,16 +1197,16 @@ class Initializer:
         normalization_const = meas.sum() / meas.shape[0]
         vprint(f"Normalization constant = {normalization_const:.4f}, this makes each measurement sum to ~ 1.", verbose=self.verbose)
         
-        meas = meas / normalization_const # Make each slice of the meas to sum to ~ 1. A global normalization constant keeps the relative intensity.
+        meas /= normalization_const # Make each slice of the meas to sum to ~ 1. A global normalization constant keeps the relative intensity.
         vprint(f"After applying normalization: meausrements int. statistics (min, mean, max) = ({meas.min():.4f}, {meas.mean():.5f}, {meas.max():.4f})", verbose=self.verbose)
         vprint(f"Mean total electron per pattern = meas.sum((-2,-1)).mean(0) = ({meas.sum((-2,-1)).mean(0):.5f})", verbose=self.verbose)
 
         set_random_seed(seed=self.random_seed)
-        meas = np.random.poisson(meas * total_electron)
+        meas = np.random.poisson(meas * total_electron) # poisson returns int32
         vprint(f"Adding Poisson noise with a total electron per diffraction pattern of {int(total_electron)}", verbose=self.verbose)
         vprint(f"After applying Poisson noise: meausrements int. statistics (min, mean, max) = ({meas.min():.4f}, {meas.mean():.5f}, {meas.max():.4f})", verbose=self.verbose)
 
-        meas = meas * normalization_const / total_electron # Un-normalize meas back to the original scale
+        meas = (meas * normalization_const / total_electron).astype('float32', copy=False) # Un-normalize meas back to the original scale
         vprint(f"After un-normalizing back to original scale: meausrements int. statistics (min, mean, max) = ({meas.min():.4f}, {meas.mean():.5f}, {meas.max():.4f})", verbose=self.verbose)
         
         return meas

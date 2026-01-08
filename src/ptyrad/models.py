@@ -5,12 +5,12 @@ This is the PyTorch model that holds optimizable tensors and interacts with loss
 
 """
 
-from math import prod
 import torch
 from torch.fft import fft2, ifft2
 import torch.nn as nn
 from torchvision.transforms.functional import gaussian_blur
 
+from ptyrad.dataloader import MeasDataLoader
 from ptyrad.forward import multislice_forward_model_vec_all
 from ptyrad.utils import imshift_batch, torch_phasor, vprint
 
@@ -78,12 +78,15 @@ class PtychoAD(torch.nn.Module):
             self.verbose                = verbose
             self.detector_blur_std      = model_params['detector_blur_std']
             self.obj_preblur_std        = model_params['obj_preblur_std']
-            if init_variables.get('on_the_fly_meas_padded', None) is not None:
-                self.meas_padded        = torch.tensor(init_variables['on_the_fly_meas_padded'], dtype=torch.float32, device=device)
-                self.meas_padded_idx    = torch.tensor(init_variables['on_the_fly_meas_padded_idx'], dtype=torch.int32, device=device)
-            else:
-                self.meas_padded        = None
-            self.meas_scale_factors     = init_variables.get('on_the_fly_meas_scale_factors', None)
+            self.preload_data           = model_params.get('preload_data', True)
+            self.meas_loader            = MeasDataLoader(
+                init_variables['measurements'], 
+                preload_data=model_params.get('preload_data', True), 
+                device=self.device,
+                meas_padded=init_variables.get('on_the_fly_meas_padded', None),
+                meas_padded_idx=init_variables.get('on_the_fly_meas_padded_idx', None),
+                meas_scale_factors=init_variables.get('on_the_fly_meas_scale_factors', None),
+            )
 
             # Parse the learning rate and start iter for optimizable tensors
             start_iter_dict = {}
@@ -109,7 +112,6 @@ class PtychoAD(torch.nn.Module):
             # Buffers are used during forward pass
             self.register_buffer      ('omode_occu',      torch.tensor(init_variables['omode_occu'],       dtype=torch.float32, device=device))
             self.register_buffer      ('H',               torch.tensor(init_variables['H'],                dtype=torch.complex64, device=device))
-            self.register_buffer      ('measurements',    torch.tensor(init_variables['measurements'],     dtype=torch.float32, device=device))
             self.register_buffer      ('N_scan_slow',     torch.tensor(init_variables['N_scan_slow'],      dtype=torch.int32, device=device))# Saving this for reference, the cropping is based on self.obj_ROI_grid.
             self.register_buffer      ('N_scan_fast',     torch.tensor(init_variables['N_scan_fast'],      dtype=torch.int32, device=device))# Saving this for reference, the cropping is based on self.obj_ROI_grid.
             self.register_buffer      ('crop_pos',        torch.tensor(init_variables['crop_pos'],         dtype=torch.int32, device=device))# Saving this for reference, the cropping is based on self.obj_ROI_grid.
@@ -214,7 +216,7 @@ class PtychoAD(torch.nn.Module):
                     self.optimizable_params.append({'params': [self.optimizable_tensors[param_name]], 'lr': lr})               
         if verbose:
             self.print_model_summary()
-        
+
     def init_propagator_vars(self):
         """ Initialize propagator related variables """
         
@@ -261,9 +263,9 @@ class PtychoAD(torch.nn.Module):
         vprint(" ")        
         
         vprint('### Optimizable variables statitsics ###')
-        vprint(f"Total measurement values  : {self.measurements.numel():,d}")
+        vprint(f"Total measurement values  : {self.meas_loader.meas_arr.size:,d}")
         vprint(f"Total optimizing variables: {total_var:,d}")
-        vprint(f"Overdetermined ratio      : {self.measurements.numel()/total_var:.2f}")
+        vprint(f"Overdetermined ratio      : {self.meas_loader.meas_arr.size/total_var:.2f}")
         vprint(" ")
         
         vprint('### Model behavior ###')
@@ -272,8 +274,9 @@ class PtychoAD(torch.nn.Module):
         vprint(f"Change slice thickness    : {self.change_thickness}")
         vprint(f"Sub-px probe shift        : {self.shift_probes}")
         vprint(f"Detector blur             : {True if self.detector_blur_std is not None else False}")
-        vprint(f"On-the-fly meas padding   : {True if self.meas_padded is not None else False}")
-        vprint(f"On-the-fly meas resample  : {True if self.meas_scale_factors is not None else False}")
+        vprint(f"Preload data              : {self.preload_data}")
+        vprint(f"On-the-fly meas padding   : {True if self.meas_loader.meas_padded is not None else False}")
+        vprint(f"On-the-fly meas resample  : {True if self.meas_loader.meas_scale_factors is not None else False}")
         vprint(" ")
     
     def get_obj_ROI(self, indices):
@@ -402,40 +405,17 @@ class PtychoAD(torch.nn.Module):
             dp_fwd = gaussian_blur(dp_fwd, kernel_size=5, sigma=self.detector_blur_std)
             
         return dp_fwd
-    
+
+    @torch.compiler.disable
     def get_measurements(self, indices=None):
-        """ Get measurements for each position """
+        """ Get measurements for each position through the data loader"""
         # Return the selected measurements based on input indices
-        # If no indices are passed, return the entire measurements ignoring any "on-the-fly" padding/resampling
-        
-        measurements = self.measurements
-        device       = self.device
-        dtype        = measurements.dtype
-        if self.meas_padded is not None:
-            meas_padded  = self.meas_padded
-            meas_padded_idx = self.meas_padded_idx
-            pad_h1, pad_h2, pad_w1, pad_w2 = meas_padded_idx
-        scale_factor = tuple(self.meas_scale_factors) if self.meas_scale_factors is not None else None
+        # If no indices are passed, return the original numpy arr of measurements
         
         if indices is not None:
-            measurements = self.measurements[indices]
-            
-            if self.meas_padded is not None:
-                canvas = torch.zeros((measurements.shape[0], *meas_padded.shape[-2:]), dtype=dtype, device=device)
-                canvas += meas_padded
-                canvas[..., pad_h1:pad_h2, pad_w1:pad_w2] = measurements # Replace the center part with the original meas
-                measurements = canvas
-            
-            if self.meas_scale_factors is not None and any(factor != 1 for factor in scale_factor):
-                measurements = torch.nn.functional.interpolate(measurements[None,], scale_factor=scale_factor, mode='bilinear')[0] # 2D interpolate requires 4D input (N, C, H, W)
-                measurements = measurements / prod(scale_factor) # This ensures the intensity scale and the integrated intensity are unchanged
-            
-        else: # Skip the "on-the-fly" operations so it won't throw any CUDA out-of-memory error. All typical PtyRAD usuage would pass get_measurements(batch) so this should be ok.
-            if self.meas_padded is not None or self.meas_scale_factors is not None:
-                vprint(f"WARNING: 'on-the-fly' measurements padding/resampling detected, but they are ignored because it may cause 'CUDA out-of-memory' when 'get_measurements()' is called without any indices. The original measurement with shape = {self.measurements.shape} is returned instead.")
-            measurements = self.measurements
-        
-        return measurements
+            return self.meas_loader[indices]
+        else:
+            return self.meas_loader.meas_arr
     
     def clear_cache(self):
         """Clear temporary attributes like cached object patches."""

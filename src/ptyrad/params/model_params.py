@@ -136,6 +136,20 @@ class ModelParams(BaseModel):
     Typical value is 0-1 px (std) based on the acceleration voltage
     """
 
+    preload_data: Optional[bool] = Field(
+        default=True,
+        description="Boolean flag for either to preload data into device memory or not",
+    )
+    """
+    type: bool. 
+    This flag determines how the measurements data is stored and transferred to device during reconstruciton. 
+    If true, measurement data will be fully loaded into device memory during model initialization for best performance. 
+    However, dataset larger than device memory (i.e., GPU VRAM) would throw Out-Of-Memory error. 
+    If 'preload_data': false, measurement data is kept on host memory (CPU RAM) and only the mini-batch is transferred to device memory in a streaming way. 
+    This would enable reconstruction of large dataset that doesn't fit into GPU VRAM with a little data transfer overhead. 
+    The default is 'true' for performance although the difference is negligible on demo datasets.
+    """
+
     optimizer_params: OptimizerParams = Field(
         default_factory=OptimizerParams, description="Optimizer configuration"
     )
