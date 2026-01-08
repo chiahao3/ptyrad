@@ -364,14 +364,6 @@ class InitParams(BaseModel):
     """
 
     # Preprocessing
-    meas_dtype: Optional[Literal['float16', 'float32']] = Field(default="float32", description="Target data type (precision) for diffraction patterns during initialization")
-    """
-    type: str, i.e., 'float16' (half precision) or 'float32' (single precision). 
-    This sets the data type (precision) of loaded measurements in case of very large datasets with uint8 or uint16 dtypes. 
-    Note that casting to lower precision would significantly reduce the dynamic range and precision of the values.
-    So generally it's advised to crop the 4D dataset up front, instead of running it with half precision unless you're sure your dynamic range is sufficient.
-    """
-    
     meas_permute: Optional[List[int]] = Field(default=None, description="Permutation for diffraction patterns")
     """
     type: null or list of ints.
