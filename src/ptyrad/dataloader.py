@@ -6,6 +6,7 @@ Custom DataLoader class to load batched measurements either from GPU device memo
 import torch
 import numpy as np
 from typing import Optional, Union, List
+from ptyrad.utils import vprint
 
 class MeasDataLoader:
     """
@@ -49,7 +50,10 @@ class MeasDataLoader:
         
         if self.preload_data:
             # Load everything into device memory at init
-            self.data = torch.tensor(meas_arr, device=self.device, dtype=self.dtype)
+            if not meas_arr.flags['C_CONTIGUOUS']:                    
+                vprint("Note: A contiguous RAM copy of measurements array is temporarily created for PyTorch tensor generation.")
+                meas_arr = np.ascontiguousarray(meas_arr) # PyTorch can't create tensor from numpy array with negative strides, so a contiguous RAM copy is needed
+            self.data = torch.from_numpy(meas_arr).to(device=self.device, dtype=self.dtype)
         else:
             # Keep as numpy array, load on-demand
             self.data = meas_arr
@@ -80,6 +84,8 @@ class MeasDataLoader:
         else:
             # Load from numpy and convert to tensor
             sliced_data = np.asarray(self.data[idx])
+            if not sliced_data.flags['C_CONTIGUOUS']:                    
+                sliced_data = np.ascontiguousarray(sliced_data) # PyTorch can't create tensor from numpy array with negative strides, so a contiguous RAM copy is needed
             measurements = torch.from_numpy(sliced_data).to(device=self.device, dtype=self.dtype)
         
         # Apply on-the-fly padding if configured
