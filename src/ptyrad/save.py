@@ -576,11 +576,11 @@ def save_results(output_path, model, params, optimizer, niter, indices, batch_lo
     if 'model' in save_result_list:
         save_dict = make_save_dict(output_path, model, params, optimizer, niter, indices, batch_losses)
         save_dict_to_hdf5(save_dict, safe_filename(os.path.join(output_path, f"model{collate_str}{iter_str}.hdf5")))
-    probe      = model.get_complex_probe_view() 
-    probe_amp  = probe.reshape(-1, probe.size(-1)).t().abs().detach().cpu().numpy()
-    probe_prop = model.get_propagated_probe(np.array([0])).permute(0,2,1,3) # (Z, pmode, Y, X) -> (Z, Y, pmode, X). # Use np.array([0]) instead of [0] for indices is more consistent with types and safer with torch.compile
-    shape      = probe_prop.shape
-    prop_p_amp = probe_prop.reshape(shape[0], shape[1], shape[2]*shape[3]).abs().detach().cpu().numpy()
+
+    probe          = model.get_complex_probe_view()
+    probe_amp      = probe.permute(1,0,2).flatten(1).abs().detach().cpu().numpy() # (pmode, Y, X) -> Permute (Y, pmode, X) -> Flatten (Y, pmode*X)
+    probe_prop     = model.get_propagated_probe(np.array([0])) # Use np.array([0]) instead of [0] for indices is more consistent with types and safer with torch.compile
+    probe_prop_amp = probe_prop.permute(0,2,1,3).flatten(2).abs().detach().cpu().numpy() # (Z, pmode, Y, X) -> Permute (Z, Y, pmode, X) -> Flatten (Z, Y, pmode*X). 
     objp       = model.opt_objp.detach().cpu().numpy()
     obja       = model.opt_obja.detach().cpu().numpy()
     # omode_occu = model.omode_occu # Currently not used but we'll need it when omode_occu != 'uniform'
@@ -604,7 +604,7 @@ def save_results(output_path, model, params, optimizer, niter, indices, batch_lo
         if 'probe' in save_result_list:
             imwrite(safe_filename(os.path.join(output_path, f"probe_amp{bit_str}{collate_str}{iter_str}.tif")), normalize_by_bit_depth(probe_amp, bit))
         if 'probe_prop' in save_result_list:
-            imwrite(safe_filename(os.path.join(output_path, f"probe_prop_amp{bit_str}{collate_str}{iter_str}.tif")), normalize_by_bit_depth(prop_p_amp, bit))
+            imwrite(safe_filename(os.path.join(output_path, f"probe_prop_amp{bit_str}{collate_str}{iter_str}.tif")), normalize_by_bit_depth(probe_prop_amp, bit))
         for fov in result_modes['FOV']:
             if fov == 'crop':
                 fov_str = '_crop'
