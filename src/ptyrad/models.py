@@ -402,7 +402,8 @@ class PtychoAD(torch.nn.Module):
         dp_fwd = multislice_forward_model_vec_all(object_patches, probes, propagators, omode_occu=self.omode_occu)
         
         if self.detector_blur_std is not None and self.detector_blur_std != 0:
-            dp_fwd = gaussian_blur(dp_fwd, kernel_size=5, sigma=self.detector_blur_std)
+            kernel_size = max(5, 2*round(3*self.detector_blur_std)+1) # Kernel size would have minimum 5, and scale with 6sigma+1
+            dp_fwd = gaussian_blur(dp_fwd, kernel_size=kernel_size, sigma=self.detector_blur_std)
             
         return dp_fwd
 
