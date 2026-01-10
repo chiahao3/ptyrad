@@ -7,6 +7,7 @@ import torch
 import numpy as np
 from typing import Optional, Union, List
 from ptyrad.utils import vprint
+from torch.utils.data import Dataset
 
 class MeasDataLoader:
     """
@@ -113,3 +114,17 @@ class MeasDataLoader:
                 measurements = measurements / (scale_h * scale_w)
         
         return measurements
+
+class IndicesDataset(Dataset):
+    """
+    The Dataset class used specifically for the multiGPU mode for DDP
+    """
+    def __init__(self, indices):
+        self.indices = indices
+
+    def __len__(self):
+        return len(self.indices)
+
+    def __getitem__(self, idx):
+        return self.indices[idx]
+

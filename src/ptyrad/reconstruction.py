@@ -12,9 +12,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.distributed as dist
-from torch.utils.data import Dataset
+from torch.utils.data import DataLoader
 
 from ptyrad.constraints import CombinedConstraint
+from ptyrad.dataloader import IndicesDataset
 from ptyrad.initialization import Initializer
 from ptyrad.losses import CombinedLoss, get_objp_contrast
 from ptyrad.models import PtychoAD
@@ -134,33 +135,25 @@ class PtyRADSolver(object):
         # Create the model and optimizer, prepare indices, batches, and output_path
         model         = PtychoAD(self.init.init_variables, params['model_params'], device=device, verbose=self.verbose)
         optimizer     = create_optimizer(model.optimizer_params, model.optimizable_params)
+        indices, batches, output_path = prepare_recon(model, self.init, params)
         
-        if not self.use_acc_device:
-            indices, batches, output_path = prepare_recon(model, self.init, params)
-        else:
-            if params['model_params']['optimizer_params']['name'] == 'LBFGS' and self.accelerator.num_processes >1:
-                vprint(f"WARNING: Optimizer 'LBFGS' is not supported for multiGPU mode (accelerator.num_processes = {self.accelerator.num_processes}), switch to default optimizer 'Adam'")
-                params['model_params']['optimizer_params']['name'] = 'Adam'
-                model.optimizer_params['name'] = 'Adam'
-                optimizer     = create_optimizer(model.optimizer_params, model.optimizable_params)
-            
-            vprint(f"params['recon_params']['GROUP_MODE'] is set to 'random' because `use_acc_device` = {self.use_acc_device}", verbose=self.verbose)
-            params['recon_params']['GROUP_MODE'] = 'random'
-            # `batches` would be replaced by a random DataLoader if we use_acc_device because I haven't figured out how to do specified indices in DataLoader
-            # In other words, only `random` grouping is available for accelerate-powered multiGPU and mixed-precision
-            indices, batches, output_path = prepare_recon(model, self.init, params)
-            ds = IndicesDataset(indices)
-            dl = torch.utils.data.DataLoader(ds, batch_size = params['recon_params']['BATCH_SIZE']['size'], shuffle = True) # This will do the batching
-            batches = self.accelerator.prepare(dl) # Note that `batches` is replaced by a DataLoader (accelerate mode) that is also an iterable object
+        # Handle LBFGS incompatibility
+        if params['model_params']['optimizer_params']['name'] == 'LBFGS' and self.accelerator.num_processes >1:
+            vprint(f"WARNING: Optimizer 'LBFGS' is not supported for multiGPU mode (accelerator.num_processes = {self.accelerator.num_processes}), switch to default optimizer 'Adam'")
+            params['model_params']['optimizer_params']['name'] = 'Adam'
+            model.optimizer_params['name'] = 'Adam'
+            optimizer     = create_optimizer(model.optimizer_params, model.optimizable_params)
+        
+        # If using multi GPU, prepare the batches, model, optimizer with Accelerator
+        if self.use_acc_device:
+            ordered_indices = IndicesDataset(np.concatenate(batches)) # Ordered indices would keep the original spatial distribution of each batch
+            dataloader = DataLoader(ordered_indices, batch_size = params['recon_params']['BATCH_SIZE']['size'], shuffle=False) # This will do the batching sequentially
+            batches = self.accelerator.prepare(dataloader) # Note that `batches` is replaced by a DataLoader (accelerate mode) that is also an iterable object
             model, optimizer = self.accelerator.prepare(model, optimizer)
             
-            vprint(f"len(DataLoader) = num_batches = {len(dl)}, DataLoader.batch_size = {len(indices)//len(dl)}", verbose=self.verbose)
-            vprint("Note that the DataLoader will be duplicated for each process, while DataLoader.batch_size is the effective batch size (batch_size_per_process * num_process)", verbose=self.verbose) 
-            vprint("The actual batch_size_per_process will be printed below for the reported batches from the main process", verbose=self.verbose) 
-            vprint("For example, batch size = 512 with 2 GPUs (2 processes), the reported/observed batch size per GPU will be 512/2=256.", verbose=self.verbose) 
-
         if logger is not None and logger.flush_file:
             logger.flush_to_file(log_dir=output_path) # Note that output_path can be None, and there's an internal flag of self.flush_file controls the actual file creation
+
         recon_loop(model, self.init, params, optimizer, self.loss_fn, self.constraint_fn, indices, batches, output_path, acc=self.accelerator)
         self.reconstruct_results = model
         self.optimizer = optimizer
@@ -289,19 +282,6 @@ class PtyRADSolver(object):
         if dist.is_initialized():
             dist.destroy_process_group()
         
-class IndicesDataset(Dataset):
-    """
-    The Dataset class used specifically for the multiGPU mode for DDP
-    """
-    def __init__(self, indices):
-        self.indices = indices
-
-    def __len__(self):
-        return len(self.indices)
-
-    def __getitem__(self, idx):
-        return self.indices[idx]
-
 ###### Reconstruction workflow related functions ######
 # These are called within PtyRADSolver, and the detailed walkthrough notebook
  
