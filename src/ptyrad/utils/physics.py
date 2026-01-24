@@ -3,11 +3,12 @@ Physics-related functions of probes, propagators, and constants, etc.
 
 """
 
-from typing import Literal, Optional, Union
+from typing import Dict, Literal, Optional, Tuple, Union
 
 import numpy as np
 import torch
 
+from .aberrations import Aberrations
 from .common import vprint
 
 
@@ -380,82 +381,271 @@ def get_default_probe_simu_params(init_params):
         raise ValueError(f"init_params['probe_illum_type'] = {probe_illum_type} not implemented yet, please use either 'electron' or 'xray'!")
     return probe_simu_params
 
-def make_stem_probe(probe_params, verbose=True):
-    # MAKE_TEM_PROBE Generate probe functions produced by object lens in 
-    # transmission electron microscope.
-    # Written by Yi Jiang based on Eq.(2.10) in Advanced Computing in Electron 
-    # Microscopy (2nd edition) by Dr.Kirkland
-    # Implemented and slightly modified in python by Chia-Hao Lee
- 
-    # Outputs:
-        #  probe: complex probe functions at real space (sample plane)
-    # Inputs: 
-        #  probe_params: probe parameters and other settings
+def make_aberration_surface_krivanek_polar(
+    aberrations: Dict[Tuple[int, int], Dict[str, float]],
+    kX: np.ndarray,
+    kY: np.ndarray,
+    wavelength: float
+) -> np.ndarray:
+    """Calculates the aberration phase surface chi(k) using Krivanek Polar form.
+
+    Implements the standard polar expansion as defined in Kirkland Eqn. 2.22.
+
+    Args:
+        aberrations: A dictionary mapping order (n, m) to polar coefficients.
+            Format: {(n, m): {'mag': float, 'phi': float}}
+            'mag': Coefficient magnitude (e.g., C_s) in Angstroms.
+            'phi': Azimuthal angle in degrees.
+        kX: Spatial frequency coordinate X (1/Angstrom).
+        kY: Spatial frequency coordinate Y (1/Angstrom).
+        wavelength: Electron wavelength in Angstroms.
+
+    Returns:
+        np.ndarray: The aberration phase surface in radians.
+    """
+    
+    alphaR = np.sqrt(kX**2 + kY**2) * wavelength
+    alphaPhi = np.arctan2(kY, kX)
+    chi = np.zeros_like(alphaR)
+    
+    for (n,m), coeffs in aberrations.items():
+        
+        if m == 0:
+            C_nm = coeffs
+            chi += (C_nm * alphaR**(n+1)) / (n+1)
+        else:
+            C_nm = coeffs['mag']
+            phi_nm = np.radians(coeffs['phi'])
+            # Kirkland Eq 2.22
+            chi += (C_nm * alphaR**(n+1) * np.cos(m*(alphaPhi - phi_nm))) / (n+1)
+    
+    chi *= 2 * np.pi / wavelength
+    
+    return chi
+
+def make_aberration_surface_krivanek_complex(
+    aberrations: Dict[Tuple[int, int], complex],
+    kX: np.ndarray,
+    kY: np.ndarray,
+    wavelength: float
+) -> np.ndarray:
+    """Calculates the aberration phase surface chi(k) using Krivanek Complex form.
+
+    Implements the complex power series expansion (Kirkland Eqn. 2.19/2.20).
+    This form utilizes the complex coordinate omega = alpha_x + i*alpha_y.
+    Note that we swapped the exponents of omega and conj(omega) so the angle convention
+    is consistent with Cartesian and Polar form.
+    
+    Args:
+        aberrations: A dictionary mapping order (n, m) to complex coefficients.
+            Format: {(n, m): complex_value}
+        kX: Spatial frequency coordinate X (1/Angstrom).
+        kY: Spatial frequency coordinate Y (1/Angstrom).
+        wavelength: Electron wavelength in Angstroms.
+
+    Returns:
+        np.ndarray: The aberration phase surface in radians (real-valued).
+    """
+    
+    alphaX = kX * wavelength # alphaX in radians
+    alphaY = kY * wavelength
+    chi = np.zeros_like(alphaX, dtype=complex)
+
+    omega = alphaX + 1.0j*alphaY
+    
+    for (n,m), coeffs in aberrations.items():
+        s = (n+m+1)//2
+        C_nm = coeffs # This is complex valued
+        chi += (C_nm * np.conj(omega)**s * omega**(n+1-s)) / (n+1) # Note that we swapped the exponenets of omega and conj(omega) so the angle conventions are consistent
+    chi = 2 * np.pi / wavelength * chi.real
+    
+    return chi
+
+def make_aberration_surface_krivanek_cartesian(
+    aberrations: Dict[Tuple[int, int], Dict[str, float]],
+    kX: np.ndarray,
+    kY: np.ndarray,
+    wavelength: float
+) -> np.ndarray:
+    r"""Calculates the aberration phase surface using recursive Cartesian polynomials.
+
+    This method is significantly faster than polar or complex forms for large arrays
+    as it avoids expensive trigonometric operations by using recursive multiplication.
+
+    Mathematical Derivation:
+    ------------------------
+    1. Start with the standard Polar form (Kirkland Eq 2.22):
+       $\chi(\alpha, \phi) = \frac{2\pi}{\lambda} \frac{1}{n+1} C_{nm} \alpha^{n+1} \cos[m(\phi - \phi_{nm})]$
+
+    2. Expand the cosine term $\cos(m\phi - m\phi_{nm})$ and ignore the prefactor and summation for now:
+       $\chi \propto \alpha^{n+1} [ \cos(m\phi)\cos(m\phi_{nm}) + \sin(m\phi)\sin(m\phi_{nm}) ]$
+
+    3. Define Cartesian coefficients $C_{nma}, C_{nmb}$ to substitute $C_{nm}$ and $\phi_{nm}$:
+       $C_{nma} = C_{nm} \cos(m\phi_{nm})$
+       $C_{nmb} = C_{nm} \sin(m\phi_{nm})$
+
+    4. Split the radial term $\alpha^{n+1}$ into $\alpha^{n+1-m} \cdot \alpha^m$ to isolate angular parts:
+       $\chi \propto \alpha^{n+1-m} [ C_{nma} (\alpha^m \cos m\phi) + C_{nmb} (\alpha^m \sin m\phi) ]$
+
+    5. Define Cartesian Angular Polynomials $X_m, Y_m$ using complex variable $Z = \alpha_x + i\alpha_y$:
+       $Z^m = (\alpha e^{i\phi})^m = \alpha^m (\cos m\phi + i \sin m\phi)$
+       
+       Therefore:
+       $X_m = \text{Re}(Z^m) = \alpha^m \cos(m\phi)$
+       $Y_m = \text{Im}(Z^m) = \alpha^m \sin(m\phi)$
+
+    6. Final Calculation:
+       $X_m, Y_m$ are pre-calculated using the recurrence $Z_{m+1} = Z_m \cdot Z$.
+       $\chi = \frac{2\pi}{\lambda} \sum \frac{1}{n+1} (\alpha^2)^{\frac{n+1-m}{2}} [ C_{nma}X_m + C_{nmb}Y_m ]$
+
+    Args:
+        aberrations: A dictionary mapping order (n, m) to Cartesian coefficients.
+            Format: {(n, m): {'a': float, 'b': float}}
+            'a': Cnma, cosine-like coefficient (Real part).
+            'b': Cnmb, sine-like coefficient (Imaginary part).
+        kX: Spatial frequency coordinate X (1/Angstrom).
+        kY: Spatial frequency coordinate Y (1/Angstrom).
+        wavelength: Electron wavelength in Angstroms.
+
+    Returns:
+        np.ndarray: The aberration phase surface in radians.
+    """
+    alphaX = kX * wavelength
+    alphaY = kY * wavelength
+    alpha_sq = alphaX**2 + alphaY**2
+    
+    # We scan the input dict to find the highest 'm' we need to generate
+    max_m = 0
+    if aberrations:
+        max_m = max(m for (n, m) in aberrations.keys())
+        
+    # 3. Generate Angular Polynomials (X_m, Y_m) via Recursion
+    # X_m = Real part of (ax + i*ay)^m
+    # Y_m = Imag part of (ax + i*ay)^m
+    
+    # Storage for the basis functions
+    X = {} 
+    Y = {}
+    
+    # Base Case: m=0 (1, 0)
+    X[0] = np.ones_like(alphaX)
+    Y[0] = np.zeros_like(alphaX)
+    
+    # Recurrence Loop
+    for m in range(max_m):
+        # The Recurrence Relation: Z_{m+1} = Z_m * (x + iy)
+        # Real: X_{m+1} = X_m * x - Y_m * y
+        # Imag: Y_{m+1} = X_m * y + Y_m * x
+        
+        X[m+1] = X[m] * alphaX - Y[m] * alphaY
+        Y[m+1] = X[m] * alphaY + Y[m] * alphaX
+        
+    chi = np.zeros_like(alphaX)
+    
+    for (n, m), val in aberrations.items():
+
+        if m == 0:
+            C_a = val
+            C_b = 0.0
+        else:
+            C_a = val.get('a', 0.0)
+            C_b = val.get('b', 0.0)
+        
+        if C_a == 0 and C_b == 0:
+            continue
+            
+        # A. Radial Term: alpha^(n+1-m)
+        # alpha^(n+1-m) = (alpha^2) ^ ((n+1-m)/2)
+        power_rad = (n + 1 - m) / 2.0
+        term_radial = alpha_sq ** power_rad
+        
+        # B. Angular Term: (C_a * X_m + C_b * Y_m)
+        term_angular = C_a * X[m] + C_b * Y[m]
+        
+        chi += term_radial * term_angular / (n + 1)
+        
+    chi *= (2 * np.pi / wavelength)
+    
+    return chi
+    
+def make_stem_probe(
+    kv: float, 
+    conv_angle: float, 
+    Npix: int, 
+    dx: float, 
+    aberrations: dict, 
+    method: Literal['polar', 'cartesian', 'complex'] = 'cartesian', 
+    verbose: bool = True
+) -> np.ndarray:
+    """Simulates a STEM probe in real space using the specified methods for chi(k) calculations.
+    The three methods (polar, cartesian, complex) give identical result within numerical precision, 
+    while 'cartesian' is chosen as the default as it's the fastest (though they're all just few ms).
+
+    Constructs the probe by defining the aperture and aberrations in Fourier space,
+    applying the phase shift, and performing an inverse FFT to obtain the real-space
+    complex wave function.
+
+    Args:
+        kv: Acceleration voltage in kilovolts (kV).
+        conv_angle: Convergence semi-angle in milliradians (mrad).
+        Npix: Number of pixels for the square simulation grid.
+        dx: Real-space pixel size in Angstroms.
+        aberrations: A dictionary of aberration coefficients. Can be in Haider 
+            (e.g., {'C1': 10}) or Krivanek (e.g., {'C12': 10, 'phi12': 30}) notation.
+            The aberrations will be automatically parsed and normalized to Krivanek polar for storage.
+        method: The computation approach for chi(k) calculation. Options:
+            - 'polar': Standard Krivanek polar form (C_nm * alpha^(n+1) * cos[m(phi-phi_nm)]).
+            - 'cartesian': Recursive Cartesian polynomials (C_nma * X[m] + C_nmb * Y[m]).
+            - 'complex': Analytic complex power series (C_nm * w*^(n+1-s) * w^s).
+        verbose: If True, prints simulation details to stdout.
+
+    Returns:
+        np.ndarray: A 2D complex array representing the probe wave function in 
+        real space, normalized such that the total intensity sums to 1.
+    """
     
     from numpy.fft import fftfreq, fftshift, ifft2, ifftshift
-    
-    ## Basic params
-    voltage     = float(probe_params["kv"])         # kV
-    conv_angle  = float(probe_params["conv_angle"]) # mrad
-    Npix        = int  (probe_params["Npix"])       # Number of pixel of thr detector/probe
-    dx          = float(probe_params["dx"])         # px size in Angstrom
-    ## Aberration coefficients
-    df          = float(probe_params.get("df",0))       # first-order aberration (defocus) in angstrom
-    c3          = float(probe_params.get("c3",0))       # third-order spherical aberration in angstrom
-    c5          = float(probe_params.get("c5",0))       # fifth-order spherical aberration in angstrom
-    c7          = float(probe_params.get("c7",0))       # seventh-order spherical aberration in angstrom
-    f_a2        = float(probe_params.get("f_a2",0))     # twofold astigmatism in angstrom
-    f_a3        = float(probe_params.get("f_a3",0))     # threefold astigmatism in angstrom
-    f_c3        = float(probe_params.get("f_c3",0))     # coma in angstrom
-    theta_a2    = float(probe_params.get("theta_a2",0)) # azimuthal orientation in radian
-    theta_a3    = float(probe_params.get("theta_a3",0)) # azimuthal orientation in radian
-    theta_c3    = float(probe_params.get("theta_c3",0)) # azimuthal orientation in radian
-    shifts      = probe_params.get("shifts",[0.0,0.0])   # shift probe center in angstrom
-    
-    # Calculate some variables
-    wavelength = 12.398/np.sqrt((2*511.0+voltage)*voltage) #angstrom
-    k_cutoff = conv_angle/1e3/wavelength
-    dk = 1/(dx*Npix)
 
     vprint("Start simulating STEM probe", verbose=verbose)
+   
+    # Calculate some variables
+    wavelength = get_EM_constants(acceleration_voltage=kv, output_type='wavelength') #angstrom
+    k_aperture = conv_angle/1e3/wavelength
+    dk = 1/(dx*Npix)
     
     # Make k space sampling and probe forming aperture
-    kx = fftshift(fftfreq(Npix, 1/Npix))
-    # kx = np.linspace(-np.floor(Npix/2),np.ceil(Npix/2)-1,Npix)
-    kX,kY = np.meshgrid(kx,kx, indexing='xy')
-
-    kX = kX*dk
-    kY = kY*dk
+    k = fftshift(fftfreq(Npix, dx)) # k is now in unit of Ang-1
+    kX,kY = np.meshgrid(k,k, indexing='xy')
     kR = np.sqrt(kX**2+kY**2)
-    theta = np.arctan2(kY,kX)
-    mask = (kR<=k_cutoff).astype('bool') 
-    
-    # Adding aberration one-by-one, the aberrations modify the flat phase (imagine a flat wavefront at aperture plane) with some polynomial perturbations
-    # The aberrated phase is called chi(k), probe forming aperture is placed here to select the relatively flat phase region to form desired real space probe
-    # Note that chi(k) is real-valued function with unit as radian, it's also not limited between -pi,pi. Think of phase shift as time delay might help.
-    
-    chi = -np.pi*wavelength*kR**2*df
-    if c3!=0: 
-        chi += np.pi/2*c3*wavelength**3*kR**4
-    if c5!=0: 
-        chi += np.pi/3*c5*wavelength**5*kR**6
-    if c7!=0: 
-        chi += np.pi/4*c7*wavelength**7*kR**8
-    if f_a2!=0: 
-        chi += np.pi*f_a2*wavelength*kR**2*np.sin(2*(theta-theta_a2))
-    if f_a3!=0: 
-        chi += 2*np.pi/3*f_a3*wavelength**2*kR**3*np.sin(3*(theta-theta_a3))
-    if f_c3!=0: 
-        chi += 2*np.pi/3*f_c3*wavelength**2*kR**3*np.sin(theta-theta_c3)
+    mask = (kR<=k_aperture)
 
-    psi = np.exp(-1j*chi)*np.exp(-2*np.pi*1j*shifts[0]*kX)*np.exp(-2*np.pi*1j*shifts[1]*kY)
+    # Parse aberrations and choose calculation methods
+    ab = Aberrations(aberrations)
+
+    if method == 'polar':
+        aberrations_by_order = ab.export(notation='krivanek', style= 'polar', layout='nested')
+        make_aberration_surface = make_aberration_surface_krivanek_polar
+    elif method == 'cartesian':
+        aberrations_by_order = ab.export(notation='krivanek', style= 'cartesian', layout='nested')
+        make_aberration_surface = make_aberration_surface_krivanek_cartesian
+    elif method == 'complex':
+        aberrations_by_order = ab.export(notation='krivanek', style= 'complex', layout='nested')
+        make_aberration_surface = make_aberration_surface_krivanek_complex
+    else:
+        raise ValueError(f"Unknown calculation method = {method}, please choose between 'polar', 'cartesian', or 'complex'")
+    
+    # Calculate chi(k) in unit of radians    
+    chi = make_aberration_surface(aberrations=aberrations_by_order, kX=kX, kY=kY, wavelength=wavelength)
+
+    # Make probe and normalize
+    psi = np.exp(-1j*chi)
     probe = mask*psi # It's now the masked wave function at the aperture plane
     probe = fftshift(ifft2(ifftshift(probe))) # Propagate the wave function from aperture to the sample plane. 
     probe = probe/np.sqrt(np.sum((np.abs(probe))**2)) # Normalize the probe so sum(abs(probe)^2) = 1
-
+    
+    # Verbose printing
     if verbose:
-        # Print some useful values
-        vprint(f'  kv          = {voltage} kV')    
+        vprint(f'  kv          = {kv} kV')    
         vprint(f'  wavelength  = {wavelength:.4f} Ang')
         vprint(f'  conv_angle  = {conv_angle} mrad')
         vprint(f'  Npix        = {Npix} px')
@@ -465,6 +655,7 @@ def make_stem_probe(probe_params, verbose=True):
         vprint(f'  dx          = {dx:.4f} Ang, Nyquist-limited dmin = 2*dx = {2*dx:.4f} Ang')
         vprint(f'  Rayleigh-limited resolution  = {(0.61*wavelength/conv_angle*1e3):.4f} Ang (0.61*lambda/alpha for focused probe )')
         vprint(f'  Real space probe extent = {dx*Npix:.4f} Ang')
+        vprint('\n' + ab.pretty_print())
     
     return probe
 
