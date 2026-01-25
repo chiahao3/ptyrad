@@ -867,33 +867,3 @@ def ndarrays_to_tensors(data, device='cuda'):
     else:
         return data
     
-def normalize_constraint_params(constraint_params):
-    """Convert old constraint param format {freq} (pre v0.1.0b11) to {start_iter, step, end_iter}."""
-    # Note that the constraint_params will be normalized before optionally passing into pydantic
-    # so it may contain either {freq}, or {start_iter, step, end_iter}
-    
-    normalized_params = {}
-    print_freq_warning = False
-    
-    for name, params in constraint_params.items():
-        # Extract legacy and new parameters
-        freq       = params.get("freq", None) # Legacy constraint param before PtyRAD v0.1.0b11
-        start_iter = params.get("start_iter", 1 if freq is not None else None)
-        step       = params.get("step", freq if freq is not None else 1)
-        end_iter   = params.get("end_iter", None)
-        
-        if freq is not None:
-            print_freq_warning = True
-
-        # Create normalized parameters
-        normalized_params[name] = {
-            "start_iter": start_iter,
-            "step": step,
-            "end_iter": end_iter,
-            **{k: v for k, v in params.items() if k not in ("freq", "step", "start_iter", "end_iter")},  # Copy other keys
-        }
-
-    if print_freq_warning:
-        vprint("WARNING: For constraint_params, 'freq' is depracated since PtyRAD v0.1.0b11 and is automatically converted to 'step'.")
-    
-    return normalized_params

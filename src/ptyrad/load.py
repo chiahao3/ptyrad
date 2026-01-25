@@ -10,7 +10,14 @@ import h5py
 import numpy as np
 import scipy.io as sio
 
-from ptyrad.utils import get_nested, handle_hdf5_types, list_nested_keys, normalize_constraint_params, tensors_to_ndarrays, vprint
+from ptyrad.utils import (
+    get_nested,
+    handle_hdf5_types,
+    list_nested_keys,
+    tensors_to_ndarrays,
+    vprint,
+)
+from ptyrad.utils.aberrations import Aberrations
 
 KeyType = Union[str, list[str], None]
 
@@ -566,6 +573,10 @@ def load_params(file_path: str, validate: bool = True):
     # Additional correction for constraint_params (temporarily added for smooth transition to v0.1.0b11)
     if params_dict.get('constraint_params') is not None:
         params_dict['constraint_params'] = normalize_constraint_params(params_dict['constraint_params'])
+        
+    # Additional correction for the probe aberrations in init_params (temporatily added for smooth transition to v0.1.0b13)
+    if params_dict.get('init_params') is not None:
+        params_dict['init_params'] = normalize_probe_params(params_dict['init_params'])
     
     # Pass into PtyRADParams (pydantic model) for default filling and validation
     if validate:
@@ -622,7 +633,7 @@ def load_toml_params(file_path):
             params_dict = tomllib.loads(content)
         except ImportError:
             # For Python < 3.11
-            import tomli # type: ignore
+            import tomli  # type: ignore
             params_dict = tomli.loads(content)
     except ImportError:
         raise ImportError("TOML support requires 'tomli' package for Python < 3.11 or built-in 'tomllib' for Python 3.11+. ")
@@ -649,3 +660,92 @@ def load_py_params(file_path):
     }
     vprint("Success! Loaded .py file path =", file_path)
     return params_dict
+
+###### These are sanitization functions for backward compatibility #####
+
+def normalize_probe_params(init_params: Dict) -> Dict:
+    """ Normalize probe params in `init_params` 
+    This includes:
+    - Migrate legacy keys (pre v0.1.0b13) like `probe_defocus`, `probe_c3`, `probe_c5` into `probe_aberrations`.
+    - Canonicalizes `probe_aberrations` into standard Krivanek polar format {'Cnm': XX, 'phinm': XX}.
+    
+    Note that the init_params will be normalized before optionally passing into pydantic
+    """
+    
+    # --- STEP 1: Legacy Migration (The "Move" Phase) ---
+    
+    # Explictly initialize `probe_aberrations` as {} if it's missing or is set to None
+    if init_params.get('probe_aberrations') is None:
+        init_params['probe_aberrations'] = {}
+
+    aberrations = init_params['probe_aberrations']
+    migrated_keys = []
+    
+    # Define Legacy Mappings AND their Blocking Aliases
+    # Format: 'legacy_key': ('canonical_modern_key', [list_of_aliases_to_check])
+    legacy_map = {
+        'probe_defocus': ('defocus', ['defocus', 'C1', 'C10', (1,0), '(1,0)']),
+        'probe_c3':      ('C30',     ['C30', 'C3', 'Cs', (3,0), '(3,0)']),
+        'probe_c5':      ('C50',     ['C50', 'C5', (5,0), '(5,0)']),
+    }
+    
+    # Merge Logic with Precedence
+    # Only migrate if the modern key is NOT already present in aberrations.
+    # This ensures explicit modern config wins over legacy config.
+    for legacy_key, (modern_key, blocking_aliases) in legacy_map.items():
+        if legacy_key in init_params:
+            legacy_val = init_params[legacy_key]
+
+            # Check if ANY of the blocking aliases are already in the new dict.
+            conflict_found = any(alias in aberrations for alias in blocking_aliases)
+            
+            if not conflict_found:
+                aberrations[modern_key] = legacy_val
+                migrated_keys.append(legacy_key)
+                
+            else:
+                vprint(f"Ignoring '{legacy_key}' because it is already defined in 'probe_aberrations' as one of {legacy_map[legacy_key][-1]}")
+                pass
+        
+            # Old keys are deleted regardless
+            del init_params[legacy_key] 
+        
+    if migrated_keys:
+        vprint(f"WARNING: Probe aberrations '{migrated_keys}' in 'init_params' are depracated since PtyRAD v0.1.0b13 and are automatically converted to 'probe_aberrations' dict.")
+    
+    # --- STEP 2: Canonicalization (The "Clean" Phase) ---
+    if aberrations:
+        init_params['probe_aberrations'] = Aberrations(aberrations).export(notation='krivanek', style='polar')
+    
+    return init_params
+
+def normalize_constraint_params(constraint_params):
+    """Convert old constraint param format {freq} (pre v0.1.0b11) to {start_iter, step, end_iter}."""
+    # Note that the constraint_params will be normalized before optionally passing into pydantic
+    # so it may contain either {freq}, or {start_iter, step, end_iter}
+    
+    normalized_params = {}
+    print_freq_warning = False
+    
+    for name, params in constraint_params.items():
+        # Extract legacy and new parameters
+        freq       = params.get("freq", None) # Legacy constraint param before PtyRAD v0.1.0b11
+        start_iter = params.get("start_iter", 1 if freq is not None else None)
+        step       = params.get("step", freq if freq is not None else 1)
+        end_iter   = params.get("end_iter", None)
+        
+        if freq is not None:
+            print_freq_warning = True
+
+        # Create normalized parameters
+        normalized_params[name] = {
+            "start_iter": start_iter,
+            "step": step,
+            "end_iter": end_iter,
+            **{k: v for k, v in params.items() if k not in ("freq", "step", "start_iter", "end_iter")},  # Copy other keys
+        }
+
+    if print_freq_warning:
+        vprint("WARNING: For constraint_params, 'freq' is depracated since PtyRAD v0.1.0b11 and is automatically converted to 'step'.")
+    
+    return normalized_params

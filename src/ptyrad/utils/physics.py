@@ -7,6 +7,7 @@ from typing import Dict, Literal, Optional, Tuple, Union
 
 import numpy as np
 import torch
+from numpy.fft import fft2, fftfreq, fftshift, ifft2, ifftshift
 
 from .aberrations import Aberrations
 from .common import vprint
@@ -335,52 +336,6 @@ def complex_object_z_resample_torch(obj: Union[torch.Tensor, np.ndarray],
     return out
 
 # Initialize probes
-def get_default_probe_simu_params(init_params):
-    """
-    Get default probe simulation parameters based on the init_params dict
-
-    """
-    probe_illum_type = init_params['probe_illum_type']
-    if probe_illum_type == 'electron':
-        probe_simu_params = {
-                        ## Basic params
-                        "kv"             : init_params['probe_kv'],
-                        "conv_angle"     : init_params['probe_conv_angle'],
-                        "Npix"           : init_params['meas_Npix'],
-                        "dx"             : init_params['probe_dx'], # dx = 1/(dk*Npix) #angstrom
-                        "pmodes"         : init_params['probe_pmode_max'], # These pmodes specific entries might be used in `make_mixed_probe` during initialization
-                        "pmode_init_pows": init_params['probe_pmode_init_pows'],
-                        ## Aberration coefficients
-                        "df"             : init_params['probe_defocus'], #first-order aberration (defocus) in angstrom, positive defocus here refers to actual underfocus or weaker lens strength following Kirkland's notation
-                        "c3"             : init_params['probe_c3'] , #third-order spherical aberration in angstrom
-                        "c5"             : init_params['probe_c5'], #fifth-order spherical aberration in angstrom
-                        "c7":0, #seventh-order spherical aberration in angstrom
-                        "f_a2":0, #twofold astigmatism in angstrom
-                        "f_a3":0, #threefold astigmatism in angstrom
-                        "f_c3":0, #coma in angstrom
-                        "theta_a2":0, #azimuthal orientation in radian
-                        "theta_a3":0, #azimuthal orientation in radian
-                        "theta_c3":0, #azimuthal orientation in radian
-                        "shifts":[0.0,0.0], #shift probe center in angstrom
-                        }
-    elif probe_illum_type == 'xray':
-        probe_simu_params = {
-                        ## Basic params
-                        "beam_kev"       : init_params['beam_kev'],
-                        "Npix"           : init_params['meas_Npix'],
-                        "dx"             : init_params['probe_dx'],
-                        "pmodes"         : init_params['probe_pmode_max'], # These pmodes specific entries might be used in `make_mixed_probe` during initialization
-                        "pmode_init_pows": init_params['probe_pmode_init_pows'],
-                        "Ls"             : init_params['probe_Ls'],
-                        "Rn"             : init_params['probe_Rn'],
-                        "dRn"            : init_params['probe_dRn'],
-                        "D_FZP"          : init_params['probe_D_FZP'],
-                        "D_H"            : init_params['probe_D_H'],
-        }
-    else:
-        raise ValueError(f"init_params['probe_illum_type'] = {probe_illum_type} not implemented yet, please use either 'electron' or 'xray'!")
-    return probe_simu_params
-
 def make_aberration_surface_krivanek_polar(
     aberrations: Dict[Tuple[int, int], Dict[str, float]],
     kX: np.ndarray,
@@ -573,7 +528,7 @@ def make_stem_probe(
     conv_angle: float, 
     Npix: int, 
     dx: float, 
-    aberrations: dict, 
+    aberrations: Union[dict, Aberrations], 
     method: Literal['polar', 'cartesian', 'complex'] = 'cartesian', 
     verbose: bool = True
 ) -> np.ndarray:
@@ -590,9 +545,10 @@ def make_stem_probe(
         conv_angle: Convergence semi-angle in milliradians (mrad).
         Npix: Number of pixels for the square simulation grid.
         dx: Real-space pixel size in Angstroms.
-        aberrations: A dictionary of aberration coefficients. Can be in Haider 
-            (e.g., {'C1': 10}) or Krivanek (e.g., {'C12': 10, 'phi12': 30}) notation.
-            The aberrations will be automatically parsed and normalized to Krivanek polar for storage.
+        aberrations: An Aberrations instance, or dictionary of aberration coefficients. 
+            The dictionary can be in Haider (e.g., {'C1': 10}), or 
+            Krivanek (e.g., {'C12': 10, 'phi12': 30}) notation in polar / cartesian / complex form.
+            Mix-match and aliases like 'defocus', 'Cs' are supported.
         method: The computation approach for chi(k) calculation. Options:
             - 'polar': Standard Krivanek polar form (C_nm * alpha^(n+1) * cos[m(phi-phi_nm)]).
             - 'cartesian': Recursive Cartesian polynomials (C_nma * X[m] + C_nmb * Y[m]).
@@ -604,10 +560,12 @@ def make_stem_probe(
         real space, normalized such that the total intensity sums to 1.
     """
     
-    from numpy.fft import fftfreq, fftshift, ifft2, ifftshift
-
-    vprint("Start simulating STEM probe", verbose=verbose)
-   
+    # Instantiate the Aberrations object if users are passing a dict
+    if isinstance(aberrations, dict):
+        ab = Aberrations(aberrations)
+    else:
+        ab = aberrations
+    
     # Calculate some variables
     wavelength = get_EM_constants(acceleration_voltage=kv, output_type='wavelength') #angstrom
     k_aperture = conv_angle/1e3/wavelength
@@ -618,10 +576,24 @@ def make_stem_probe(
     kX,kY = np.meshgrid(k,k, indexing='xy')
     kR = np.sqrt(kX**2+kY**2)
     mask = (kR<=k_aperture)
+    
+    # Verbose printing
+    if verbose:
+        vprint("Start simulating STEM probe")
+        vprint(f'  kv          = {kv} kV')    
+        vprint(f'  wavelength  = {wavelength:.4f} Ang')
+        vprint(f'  conv_angle  = {conv_angle} mrad')
+        vprint(f'  Npix        = {Npix} px')
+        vprint(f'  dk          = {dk:.4f} Ang^-1')
+        vprint(f'  kMax        = {(Npix*dk/2):.4f} Ang^-1')
+        vprint(f'  alpha_max   = {(Npix*dk/2*wavelength*1000):.4f} mrad')
+        vprint(f'  dx          = {dx:.4f} Ang, Nyquist-limited dmin = 2*dx = {2*dx:.4f} Ang')
+        vprint(f'  Rayleigh-limited resolution  = {(0.61*wavelength/conv_angle*1e3):.4f} Ang (0.61*lambda/alpha for focused probe )')
+        vprint(f'  Real space probe extent = {dx*Npix:.4f} Ang')
+        for line in ab.pretty_print().splitlines():
+            vprint(line)
 
-    # Parse aberrations and choose calculation methods
-    ab = Aberrations(aberrations)
-
+    # Choosing the computation method used for chi calculation
     if method == 'polar':
         aberrations_by_order = ab.export(notation='krivanek', style= 'polar', layout='nested')
         make_aberration_surface = make_aberration_surface_krivanek_polar
@@ -643,29 +615,25 @@ def make_stem_probe(
     probe = fftshift(ifft2(ifftshift(probe))) # Propagate the wave function from aperture to the sample plane. 
     probe = probe/np.sqrt(np.sum((np.abs(probe))**2)) # Normalize the probe so sum(abs(probe)^2) = 1
     
-    # Verbose printing
-    if verbose:
-        vprint(f'  kv          = {kv} kV')    
-        vprint(f'  wavelength  = {wavelength:.4f} Ang')
-        vprint(f'  conv_angle  = {conv_angle} mrad')
-        vprint(f'  Npix        = {Npix} px')
-        vprint(f'  dk          = {dk:.4f} Ang^-1')
-        vprint(f'  kMax        = {(Npix*dk/2):.4f} Ang^-1')
-        vprint(f'  alpha_max   = {(Npix*dk/2*wavelength*1000):.4f} mrad')
-        vprint(f'  dx          = {dx:.4f} Ang, Nyquist-limited dmin = 2*dx = {2*dx:.4f} Ang')
-        vprint(f'  Rayleigh-limited resolution  = {(0.61*wavelength/conv_angle*1e3):.4f} Ang (0.61*lambda/alpha for focused probe )')
-        vprint(f'  Real space probe extent = {dx*Npix:.4f} Ang')
-        vprint('\n' + ab.pretty_print())
-    
     return probe
 
-def make_fzp_probe(probe_params, verbose=True):
+def make_fzp_probe(
+    beam_kev: float, 
+    Npix: int, 
+    dx: float,
+    Ls: float,
+    Rn: float,
+    dRn: float,
+    D_FZP: float,
+    D_H: float,
+    verbose=True
+) -> np.ndarray:
     """
     Generates a Fresnel zone plate probe with internal Fresnel propagation for x-ray ptychography simulations.
 
     Parameters:
-        N (int): Number of pixels.
-        lambda_ (float): Wavelength.
+        beam_kev (float): Energy of the x-ray photon.
+        Npix (int): Number of pixels.
         dx (float): Pixel size (in meters) in the sample plane.
         Ls (float): Distance (in meters) from the focal plane to the sample.
         Rn (float): Radius of outermost zone (in meters).
@@ -676,24 +644,16 @@ def make_fzp_probe(probe_params, verbose=True):
     Returns:
         ndarray: Calculated probe field in the sample plane.
     """
-    N        = int(probe_params['Npix'])
-    energy   = int(probe_params['beam_kev'])
-    dx       = float(probe_params['dx'])
-    Ls       = float(probe_params['Ls'])
-    Rn       = float(probe_params['Rn'])
-    dRn      = float(probe_params['dRn'])
-    D_FZP    = float(probe_params['D_FZP'])
-    D_H      = float(probe_params['D_H'])
 
-    lambda_ = 1.23984193e-9 / energy # lambda_: m; energy: keV
+    lambda_ = 1.23984193e-9 / beam_kev # lambda_: m; energy: keV
     fl = 2 * Rn * dRn / lambda_  # focal length corresponding to central wavelength
 
     vprint("Start simulating FZP probe", verbose=verbose)
 
-    dx_fzp = lambda_ * fl / N / dx  # pixel size in the FZP plane
+    dx_fzp = lambda_ * fl / Npix / dx  # pixel size in the FZP plane
 
     # Coordinate in the FZP plane
-    lx_fzp = np.linspace(-dx_fzp * N / 2, dx_fzp * N / 2, N)
+    lx_fzp = np.linspace(-dx_fzp * Npix / 2, dx_fzp * Npix / 2, Npix)
     x_fzp, y_fzp = np.meshgrid(lx_fzp, lx_fzp)
 
     
@@ -713,7 +673,7 @@ def make_fzp_probe(probe_params, verbose=True):
     # Coordinate grid for output plane
     fc = 1 / dx_fzp
     fu = lambda_ * (fl + Ls) * fc
-    lu = np.fft.ifftshift(np.linspace(-fu / 2, fu / 2, M))
+    lu = ifftshift(np.linspace(-fu / 2, fu / 2, M))
     u, v = np.meshgrid(lu, lu)
 
     z = fl + Ls
@@ -722,15 +682,15 @@ def make_fzp_probe(probe_params, verbose=True):
         pf = np.exp(1j * k * z) * np.exp(1j * k * (u**2 + v**2) / (2 * z))
         kern = IN * np.exp(1j * k * (x**2 + y**2) / (2 * z))
         
-        kerntemp = np.fft.fftshift(kern)
-        cgh = np.fft.fft2(kerntemp)
-        probe = np.fft.fftshift(cgh * pf)
+        kerntemp = fftshift(kern)
+        cgh = fft2(kerntemp)
+        probe = fftshift(cgh * pf)
     else:
         # Propagation in the negative z direction (or backward propagation)
         z = abs(z)
         pf = np.exp(1j * k * z) * np.exp(1j * k * (x**2 + y**2) / (2 * z))
-        cgh = np.fft.ifft2(np.fft.ifftshift(IN) / np.exp(1j * k * (u**2 + v**2) / (2 * z)))
-        probe = np.fft.fftshift(cgh) / pf
+        cgh = ifft2(ifftshift(IN) / np.exp(1j * k * (u**2 + v**2) / (2 * z)))
+        probe = fftshift(cgh) / pf
 
     return probe
 
@@ -887,7 +847,7 @@ def near_field_evolution(Npix_shape, dx, dz, lambd):
     ky = 2 * np.pi * ygrid / dx
     kx = 2 * np.pi * xgrid / dx
     Ky, Kx = np.meshgrid(ky, kx, indexing="ij")
-    H = np.fft.ifftshift(np.exp(1j * dz * np.sqrt(k ** 2 - Kx ** 2 - Ky ** 2))) # H has zero frequency at the corner in k-space
+    H = ifftshift(np.exp(1j * dz * np.sqrt(k ** 2 - Kx ** 2 - Ky ** 2))) # H has zero frequency at the corner in k-space
 
     return H
 

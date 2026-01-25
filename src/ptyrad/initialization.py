@@ -24,7 +24,6 @@ from ptyrad.utils import (
     exponential_decay,
     fit_background,
     fit_cbed_pattern,
-    get_default_probe_simu_params,
     get_EM_constants,
     get_nested,
     guess_radius_of_bright_field_disk,
@@ -1245,8 +1244,6 @@ class Initializer:
         except KeyError as e:
             raise KeyError(f"Missing required configuration field: {e}")
         
-        probe_illum_type = self.init_variables['probe_illum_type']
-
         vprint(f"Loading probe from source = '{probe_source}'", verbose=self.verbose)
 
         if probe_source == 'custom':
@@ -1258,7 +1255,7 @@ class Initializer:
         elif probe_source == 'py4DSTEM':
             probe = self._load_probe_from_py4dstem(probe_params)
         elif probe_source == 'simu':
-            probe = self._simulate_probe(probe_params, probe_illum_type)
+            probe = self._simulate_probe() # Simulation params are all defined in self.init_params
         else:
             raise ValueError(f"Unsupported probe source '{probe_source}'. Use 'custom', 'PtyRAD', 'PtyShv', 'py4DSTEM', or 'simu'.")
 
@@ -1317,32 +1314,42 @@ class Initializer:
 
         return probe
 
-    def _simulate_probe(self, simu_params: dict, probe_illum_type: str):
+    def _simulate_probe(self):
         """
         Simulate the probe based on the specified parameters.
         """
+        init_params      = self.init_params
+        probe_illum_type = init_params.get('probe_illum_type', 'electron')
+        pmodes           = init_params.get('pmodes', 1)
+        pmode_init_pows  = init_params.get('pmode_init_pows', [0.02])
         
-        # TODO Can probably improve the params file structure and simulation process for probe
-        # Currently the probe simu parameters that are not needed when we load existing probes
-        # are just implictly ignored, like defocus, convergence angle. 
-        # Illumination type is something that can probably live directly under `init_params.probe`
-                
-        if simu_params is not None:
-            vprint("Using user-specified parameters in 'init_params['probe_params']' for initial probe simulation.", verbose=self.verbose)
-        else:
-            vprint("Using experimental parameters specified by 'init_params' for initial probe simulation.", verbose=self.verbose)
-            simu_params = get_default_probe_simu_params(self.init_params)
+        vprint("Using experimental parameters specified by 'init_params' for initial probe simulation.", verbose=self.verbose)
 
         if probe_illum_type == 'electron':
-            probe = make_stem_probe(simu_params, verbose=self.verbose)[None, ...]
+            probe = make_stem_probe(kv=init_params['probe_kv'], 
+                                    conv_angle=init_params['probe_conv_angle'], 
+                                    Npix=init_params['meas_Npix'], 
+                                    dx=init_params['probe_dx'], # dx = 1/(dk*Npix). Unit in angstrom. This entry is automatically generated inside Initializer.init_calibration().
+                                    aberrations=init_params['probe_aberrations'], 
+                                    verbose=self.verbose)[None, ...]
+
         elif probe_illum_type == 'xray':
-            probe = make_fzp_probe(simu_params, verbose=self.verbose)[None, ...]
+            probe = make_fzp_probe(beam_kev=init_params['beam_kev'],
+                                   Npix=init_params['meas_Npix'],
+                                   dx=init_params['probe_dx'],
+                                   Ls=init_params['probe_Ls'],
+                                   Rn=init_params['probe_Rn'],
+                                   dRn=init_params['probe_dRn'],
+                                   D_FZP=init_params['probe_D_FZP'],
+                                   D_H=init_params['probe_D_H'],
+                                   verbose=self.verbose)[None, ...]
+
         else:
             raise ValueError(f"Unsupported illumination type '{probe_illum_type}'. Use 'electron' or 'xray'.")
 
         # probe is (1, Ny, Nx) after simulation, expand it to (pmode, Ny, Nx) if needed
-        if simu_params['pmodes'] > 1:
-            probe = make_mixed_probe(probe[0], simu_params['pmodes'], simu_params['pmode_init_pows'], verbose=self.verbose)
+        if pmodes > 1:
+            probe = make_mixed_probe(probe[0], pmodes=pmodes, pmode_init_pows=pmode_init_pows, verbose=self.verbose)
 
         return probe
 

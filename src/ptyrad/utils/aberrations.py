@@ -11,7 +11,7 @@ import numpy as np
 # ------------------------------------------------------------
 
 ABERRATION_SPEC = {
-    (1, 0): ("C1", 1.0, "Defocus"),
+    (1, 0): ("C1", 1.0, "Defocus (C10 = -df)"),
     (1, 2): ("A1", 1.0, "2-fold astigmatism"),
     (2, 1): ("B2", 1/3.0, "Axial coma"),
     (2, 3): ("A2", 1.0, "3-fold astigmatism"),

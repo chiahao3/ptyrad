@@ -4,6 +4,8 @@ from typing import Any, Dict, List, Literal, Optional, Union, get_args
 import numpy as np
 from pydantic import BaseModel, Field, field_validator, model_serializer, model_validator
 
+from ptyrad.utils.aberrations import Aberrations
+
 
 class FilePathWithKey(BaseModel):
     path: pathlib.Path = Field(description="File path")
@@ -178,7 +180,7 @@ SOURCE_PARAMS_MAPPING = {
         'custom': np.ndarray,
     },
     'probe': {
-        'simu': Union[dict, None],
+        'simu': type(None),
         'PtyRAD': pathlib.Path,
         'PtyShv': pathlib.Path, 
         'py4DSTEM': pathlib.Path,
@@ -252,23 +254,11 @@ class InitParams(BaseModel):
     """ 
     Semi-convergence angle in mrad for probe-forming aperture 
     """
-    
-    probe_defocus: Optional[float] = Field(default=0.0, description="Defocus (-C1) in Angstrom")
-    """ 
-    Defocus (-C1) aberration coefficient for the probe. 
-    Positive defocus here refers to actual underfocus or weaker lens strength following Kirkland/abtem/ptychoshelves convention 
-    """
-    
-    probe_c3: Optional[float] = Field(default=0.0, description="3rd-order spherical aberration (C3) in Angstrom")
-    """
-    3rd-order spherical aberration coefficient (C3) in Ang for the simulated probe 
-    """
-    
-    probe_c5: Optional[float] = Field(default=0.0, description="5th-order spherical aberration (C5) in Angstrom")
-    """
-    5th-order spherical aberration coefficient (C5) in Ang for the simulated probe 
-    """
-    
+
+    # The validation of dict entries are deferred to Aberrations class
+    probe_aberrations: Dict[str, Any] = Field(default_factory=dict,
+                                              description="Dictionary of aberration coefficients (Krivanek or Haider). e.g. {'defocus': -100, 'A1': 5, 'C21': 50}")
+   
     ## Xray probe params (used if probe_illum_type == 'xray')
     beam_kev: Optional[float] = Field(default=None, description="Xray beam energy in keV")
 
@@ -581,12 +571,11 @@ class InitParams(BaseModel):
     Data source of the probe. Currently supporting 'simu', 'PtyRAD', 'PtyShv', 'py4DSTEM', and 'custom'
     """
     
-    probe_params: Optional[Union[Dict[str, Any], pathlib.Path, np.ndarray]] = Field(default=None, description="Parameters for probe loading/initialization")
+    probe_params: Optional[Union[pathlib.Path, np.ndarray]] = Field(default=None, description="Parameters for probe loading/initialization")
     """
-    type: null, dict, str, or numpy array. 
+    type: null, str, or numpy array. 
     Parameters of the probe loading/initialization. 
-    For 'simu' (simulating probe), provide a dict of 'probe_simu_params' to specify the simulation parameters 
-    (see 'utils/make_stem_probe' for more details) or null to use only basic paramaters like kV, conv_angle, defocus and c3. 
+    For 'simu' (simulating probe), set this to null, and probe will be simulated based on values set in `init_params` including kV, conv_angle, and aberrations. 
     For loading probe from 'PtyRAD' or 'PtyShv', provide a str of <PATH_TO_RECONSTRUCTION_FILE>. 
     For 'custom' probe source, pass the 3D numpy array to the 'probe_params' entry after you load this .yml as a dict
     """
@@ -654,6 +643,22 @@ class InitParams(BaseModel):
 ################################################################################################################################
 ################################################################################################################################
 ################################################################################################################################
+
+    @field_validator('probe_aberrations')
+    @classmethod
+    def validate_aberrations_logic(cls, v: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Delegates validation to the Aberrations class. 
+        If the dict contains invalid keys or values, Aberrations will raise an error,
+        which Pydantic will catch and display to the user.
+        """
+        try:
+            # We don't keep the object, we just check if it CAN be created.
+            Aberrations(v)
+        except Exception as e:
+            # Wrap the error so Pydantic knows why validation failed
+            raise ValueError(f"Invalid aberration configuration: {str(e)}")
+        return v
 
 
     @field_validator("probe_pmode_init_pows")
@@ -763,10 +768,10 @@ class InitParams(BaseModel):
             if not v.is_file():
                 raise FileNotFoundError(f"{info.field_name}: Path '{v}' does not point to a valid file")
             return v
-        if isinstance(v, (dict, np.ndarray)):
+        if isinstance(v, np.ndarray):
             return v
         else:
-            raise ValueError(f"{info.field_name} must be a dict, a valid file path, or a NumPy array, got {type(v).__name__}")
+            raise ValueError(f"{info.field_name} must be null, a valid file path string, or a NumPy array, got {type(v).__name__}")
         
     @field_validator('pos_params')    
     @classmethod
@@ -860,7 +865,7 @@ class InitParams(BaseModel):
                         f"'{field}' must be provided when probe_illum_type='xray'."
                     )
             # Clear irrelevant fields for clarity
-            for field in ['probe_kv', 'probe_conv_angle', 'probe_defocus', 'probe_c3', 'probe_c5']:
+            for field in ['probe_kv', 'probe_conv_angle', 'probe_aberrations']:
                 setattr(self, field, None)
 
         return self
