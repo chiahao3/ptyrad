@@ -8,7 +8,7 @@ A simple python script for launching *PtyRAD* in **"reconstruction mode"**, whic
 
 ```python
 from ptyrad.load import load_params
-from ptyrad.reconstruction import PtyRADSolver
+from ptyrad.solver import PtyRADSolver
 from ptyrad.utils import print_system_info, set_gpu_device, CustomLogger
 
 logger = CustomLogger(log_file='ptyrad_log.txt', log_dir='auto', prefix_time='datetime', show_timestamp=True)

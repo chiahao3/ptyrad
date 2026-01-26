@@ -8,7 +8,7 @@ import argparse
 
 def run(args):
     from ptyrad.load import load_params
-    from ptyrad.reconstruction import PtyRADSolver
+    from ptyrad.solver import PtyRADSolver
     from ptyrad.utils import CustomLogger, get_nested, print_system_info, resolve_seed_priority, set_accelerator, set_gpu_device
     
     # Setup CustomLogger

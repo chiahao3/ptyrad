@@ -40,6 +40,12 @@ from .common import (  # noqa: F401
     vprint,
     vprint_nested_dict,
 )
+from .grouping import ( # noqa: F401
+    get_hilbert_key,
+    remap_batches_to_global,
+    sparse_sampler_fps,
+    sparse_sampler_hilbert,
+)
 from .image_proc import (  # noqa: F401
     create_one_hot_mask,
     fit_background,
