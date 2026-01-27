@@ -24,6 +24,7 @@ from ptyrad.utils import (
     set_random_seed,
     vprint,
 )
+from ptyrad.utils.aberrations import Aberrations
 from ptyrad.visualization import plot_summary
 
 # ==============================================================================
@@ -135,6 +136,10 @@ def optuna_objective(trial, params, init, loss_fn, constraint_fn, device='cuda',
     
     init.verbose = verbose # This would affect the initialization printing for each hypertune trials
     params = deepcopy(params)
+    
+    # ==============================================================================
+    # SECTION 1: PARSE CONFIGS
+    # ==============================================================================
         
     # Parse the recon_params
     recon_params      = params.get('recon_params')
@@ -154,11 +159,14 @@ def optuna_objective(trial, params, init, loss_fn, constraint_fn, device='cuda',
     trial_id = 't' + str(trial.number).zfill(4)
     params['recon_params']['prefix'] += trial_id
     
+    # ==============================================================================
+    # SECTION 2: DYNAMIC PARAMETER INJECT 
+    # ==============================================================================
+    
     ## Currently only re-initialize the required parts for performance, but once there're too many correlated params need to be re-initialized,
     ## we might put the entire initialization inside optuna_objective for readability, although init_measurements for every trial would be a large overhead.
-
     ## TODO After the refactoring of `init_calibration` and better dx setting logic, it's possible to include more optimizable params without exploding the logic here
-            
+
     # Batch size
     if tune_params['batch_size']['state']:
         vname = 'batch_size'
@@ -192,13 +200,39 @@ def optuna_objective(trial, params, init, loss_fn, constraint_fn, device='cuda',
         init.init_obj()
         init.init_H()
         
-    # probe_params (pmode_max, conv_angle, defocus, z_shift, c3, c5)
+    # probe_params (pmode_max, conv_angle, z_shift)
     remake_probe = False
-    for vname in ['pmode_max', 'conv_angle', 'defocus', 'z_shift', 'c3', 'c5']:
+    for vname in ['pmode_max', 'conv_angle', 'z_shift']:
         if tune_params[vname]['state']:
             vparams = tune_params[vname]
             init.init_params['probe_' + vname] = get_optuna_suggest(trial, vparams['suggest'], vname, vparams['kwargs'])
             remake_probe = True
+            
+    ## probe_aberrations
+    valid_aberrations = [
+        'C10', 'C12', 
+        'C21', 'C23', 
+        'C30', 'C32', 'C34', 
+        'C41', 'C43', 'C45', 
+        'C50', 'C52', 'C54', 'C56']
+    init.init_params['probe_aberrations'] = Aberrations(init.init_params['probe_aberrations']).get_krivanek_cartesian() # Sanitize it first
+    for vname in valid_aberrations: # Hard code up to 5th order
+        if tune_params[vname]['state']:
+            vparams = tune_params[vname]
+            
+            # parse aberration keys
+            m = int(vname[-1])
+            
+            if m==0: # Round-lens
+                init.init_params['probe_aberrations'][vname] = get_optuna_suggest(trial, vparams['suggest'], vname, vparams['kwargs'])
+            else:
+                vparams['kwargs']
+                init.init_params['probe_aberrations'][f'{vname}a'] = get_optuna_suggest(trial, vparams['suggest'], f'{vname}a', vparams['kwargs'])
+                init.init_params['probe_aberrations'][f'{vname}b'] = get_optuna_suggest(trial, vparams['suggest'], f'{vname}b', vparams['kwargs'])
+            
+            remake_probe = True
+            
+    # Re-initialize the probe
     if remake_probe:
         init.init_probe()
             
@@ -247,6 +281,10 @@ def optuna_objective(trial, params, init, loss_fn, constraint_fn, device='cuda',
     obj_tilts = [obj_tilts] # Make it into [[tilt_y, tilt_x]]
     if obj_tilts != [[0,0]]:
         init.init_variables['obj_tilts'] = obj_tilts # No need to update init_params['tilt_params'] because the pass-in value is only used when `tilt_params = 'custom'`
+   
+    # ==============================================================================
+    # SECTION 3: RECONSTRUCTION LOOP
+    # ==============================================================================
    
     # Create the model and optimizer, prepare indices, batches, and output_path
     model         = PtychoAD(init.init_variables, params['model_params'], device=device, verbose=verbose)

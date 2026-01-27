@@ -1,7 +1,8 @@
+import warnings
 from typing import Any, Dict, Literal, Optional
 
 import optuna
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_serializer, model_validator
 
 
 class SamplerParams(BaseModel):
@@ -126,10 +127,21 @@ class TuneParams(BaseModel):
     # Probe mode and aberration
     pmode_max:  TuneParam = Field(default_factory=lambda: TuneParam(state=False, suggest="int",   kwargs={"low": 1, "high": 8, "step": 1}), description="Probe modes")
     conv_angle: TuneParam = Field(default_factory=lambda: TuneParam(state=False, suggest="float", kwargs={"low": 24, "high": 26, "step": 1}), description="Convergence angle (mrad)")
-    defocus:    TuneParam = Field(default_factory=lambda: TuneParam(state=False, suggest="float", kwargs={"low": -50, "high": 50, "step": 0.1}), description="Defocus (Ang)")
+    C10:        TuneParam = Field(default_factory=lambda: TuneParam(state=False, suggest="float", kwargs={"low": -100, "high": 100, "step": 1}), description="Defocus (C10 = -df)")
+    C12:        TuneParam = Field(default_factory=lambda: TuneParam(state=False, suggest="float", kwargs={"low": -100, "high": 100, "step": 1}), description="2-fold astigmatism")
+    C21:        TuneParam = Field(default_factory=lambda: TuneParam(state=False, suggest="float", kwargs={"low": -1000, "high": 1000, "step": 1}), description="Axial coma")
+    C23:        TuneParam = Field(default_factory=lambda: TuneParam(state=False, suggest="float", kwargs={"low": -1000, "high": 1000, "step": 1}), description="3-fold astigmatism")
+    C30:        TuneParam = Field(default_factory=lambda: TuneParam(state=False, suggest="float", kwargs={"low": -5000, "high": 5000, "step": 1}), description="Spherical aberration")
+    C32:        TuneParam = Field(default_factory=lambda: TuneParam(state=False, suggest="float", kwargs={"low": -5000, "high": 5000, "step": 1}), description="Axial star aberration")
+    C34:        TuneParam = Field(default_factory=lambda: TuneParam(state=False, suggest="float", kwargs={"low": -5000, "high": 5000, "step": 1}), description="4-fold astigmatism")
+    C41:        TuneParam = Field(default_factory=lambda: TuneParam(state=False, suggest="float", kwargs={"low": -5.0e4, "high": 5.0e4, "step": 1}), description="Axial coma(4th)")
+    C43:        TuneParam = Field(default_factory=lambda: TuneParam(state=False, suggest="float", kwargs={"low": -5.0e4, "high": 5.0e4, "step": 1}), description="3-lobe aberration")
+    C45:        TuneParam = Field(default_factory=lambda: TuneParam(state=False, suggest="float", kwargs={"low": -5.0e4, "high": 5.0e4, "step": 1}), description="5-fold astigmatism")
+    C50:        TuneParam = Field(default_factory=lambda: TuneParam(state=False, suggest="float", kwargs={"low": -5.0e5, "high": 5.0e5, "step": 1}), description="Spherical aberration (5th)")
+    C52:        TuneParam = Field(default_factory=lambda: TuneParam(state=False, suggest="float", kwargs={"low": -5.0e5, "high": 5.0e5, "step": 1}), description="Axial star aberration(5th)")
+    C54:        TuneParam = Field(default_factory=lambda: TuneParam(state=False, suggest="float", kwargs={"low": -5.0e5, "high": 5.0e5, "step": 1}), description="4-lobe aberration")
+    C56:        TuneParam = Field(default_factory=lambda: TuneParam(state=False, suggest="float", kwargs={"low": -5.0e5, "high": 5.0e5, "step": 1}), description="6-fold astigmatism")
     z_shift:    TuneParam = Field(default_factory=lambda: TuneParam(state=False, suggest="float", kwargs={"low": -50, "high": 50, "step": 10}), description="Axially (z) shift the initialized probe (Ang)")
-    c3:         TuneParam = Field(default_factory=lambda: TuneParam(state=False, suggest="float", kwargs={"low": 4000, "high": 10000, "step": 100}), description="C3 aberration (Ang)")
-    c5:         TuneParam = Field(default_factory=lambda: TuneParam(state=False, suggest="float", kwargs={"low": 50000, "high": 100000, "step": 5000}), description="C5 aberration (Ang)")
     # Multislice object
     Nlayer:     TuneParam = Field(default_factory=lambda: TuneParam(state=False, suggest="int",   kwargs={"low": 1, "high": 8, "step": 1}), description="Number of object layers")
     dz:         TuneParam = Field(default_factory=lambda: TuneParam(state=False, suggest="float", kwargs={"low": 4, "high": 8, "step": 0.5}), description="Slice thickness (Ang)")
@@ -142,6 +154,54 @@ class TuneParams(BaseModel):
     tilt_y:     TuneParam = Field(default_factory=lambda: TuneParam(state=False, suggest="float", kwargs={"low": -5, "high": 5, "step": 0.5}), description="Object tilt y (mrad)")
     tilt_x:     TuneParam = Field(default_factory=lambda: TuneParam(state=False, suggest="float", kwargs={"low": -5, "high": 5, "step": 0.5}), description="Object tilt x (mrad)")
 
+    # --- DORMANT LEGACY FIELDS ---
+    # Keep these so the old params files (prior v0.1.0b13) parses successfully. 
+    # default=None allows newer clean files to omit them entirely.
+    defocus: TuneParam | None = Field(default=None, description="DEPRECATED: Use C10")
+    c3:      TuneParam | None = Field(default=None, description="DEPRECATED: Use C30")
+    c5:      TuneParam | None = Field(default=None, description="DEPRECATED: Use C50")
+    
+    @model_validator(mode='after')
+    def check_legacy_intent(self):
+        legacy_map = {
+            'defocus': 'C10', 
+            'c3': 'C30', 
+            'c5': 'C50'
+        }
+        
+        for old_key, new_key in legacy_map.items():
+            # Access the field (e.g., self.defocus)
+            param = getattr(self, old_key)
+            
+            if param is not None:
+                # CHECK 1: Is the user trying to USE it?
+                if param.state is True:
+                    raise ValueError(
+                        f"Legacy tune_params '{old_key}' is set to active (state=True). "
+                        f"This parameter has been migrated to the Krivanek notation. "
+                        f"Please rename '{old_key}' to '{new_key}' in your params file."
+                    )
+                
+                # CHECK 2: It exists but is inactive (state=False)
+                # We allow it (so the file loads), but we warn the user to clean it up.
+                warnings.warn(
+                    f"hypertune_params.tune_params contains deprecated field '{old_key}'. "
+                    f"It is currently inactive and ignored, but will be removed in future versions. "
+                    f"Please update your params file to remove it.",
+                    UserWarning
+                )
+        
+        return self
+    
+    @model_serializer(mode='wrap')
+    def scrub_legacy_keys(self, handler) -> Dict[str, Any]:
+        dumped_data = handler(self)
+        # Remove these keys if they are None (inactive)
+        legacy_keys = ['defocus', 'c3', 'c5']
+        for k in legacy_keys:
+            if dumped_data.get(k) is None:
+                dumped_data.pop(k, None)
+        return dumped_data
 
 class HypertuneParams(BaseModel):
     """

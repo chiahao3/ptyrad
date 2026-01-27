@@ -1,5 +1,5 @@
-# Created with PtyRAD 0.1.0b12
-# Requires PtyRAD >= 0.1.0b12
+# Created with PtyRAD 0.1.0b13
+# Requires PtyRAD >= 0.1.0b13
 # Latest demo params files / scripts: https://github.com/chiahao3/ptyrad/tree/main/demo
 # Documentation: https://ptyrad.readthedocs.io/en/latest/
 
@@ -88,10 +88,21 @@ hypertune_params : {
         'dx'         : {'state': false, 'suggest': 'float', 'kwargs': {'low': 0.1400, 'high': 0.1600, 'step': null, 'log': false}},
         'pmode_max'  : {'state': false, 'suggest': 'int', 'kwargs': {'low': 1, 'high': 8, 'step': 1, 'log': false}},
         'conv_angle' : {'state': false, 'suggest': 'float', 'kwargs': {'low': 24, 'high': 26, 'step': 1, 'log': false}},
-        'defocus'    : {'state': false, 'suggest': 'float', 'kwargs': {'low': -50, 'high': 50, 'step': 0.1, 'log': false}},
+        'C10'        : {'state': false, 'suggest': 'float', 'kwargs': {'low': -100, 'high': 100, 'step': 1, 'log': false}},
+        'C12'        : {'state': false, 'suggest': 'float', 'kwargs': {'low': -100, 'high': -100, 'step': 1, 'log': false}},
+        'C21'        : {'state': false, 'suggest': 'float', 'kwargs': {'low': -1000, 'high': 1000, 'step': 10, 'log': false}},
+        'C23'        : {'state': false, 'suggest': 'float', 'kwargs': {'low': -1000, 'high': 1000, 'step': 10, 'log': false}},
+        'C30'        : {'state': false, 'suggest': 'float', 'kwargs': {'low': -5000, 'high': 5000, 'step': 100, 'log': false}},
+        'C32'        : {'state': false, 'suggest': 'float', 'kwargs': {'low': -5000, 'high': 5000, 'step': null, 'log': false}},
+        'C34'        : {'state': false, 'suggest': 'float', 'kwargs': {'low': -5000, 'high': 5000, 'step': null, 'log': false}},
+        'C41'        : {'state': false, 'suggest': 'float', 'kwargs': {'low': -5.0e+4, 'high': 5.0e+4, 'step': null, 'log': false}},
+        'C43'        : {'state': false, 'suggest': 'float', 'kwargs': {'low': -5.0e+4, 'high': 5.0e+4, 'step': null, 'log': false}},
+        'C45'        : {'state': false, 'suggest': 'float', 'kwargs': {'low': -5.0e+4, 'high': 5.0e+4, 'step': null, 'log': false}},
+        'C50'        : {'state': false, 'suggest': 'float', 'kwargs': {'low': -5.0e+4, 'high': 5.0e+4, 'step': null, 'log': false}},
+        'C52'        : {'state': false, 'suggest': 'float', 'kwargs': {'low': -5.0e+4, 'high': 5.0e+4, 'step': null, 'log': false}},
+        'C54'        : {'state': false, 'suggest': 'float', 'kwargs': {'low': -5.0e+4, 'high': 5.0e+4, 'step': null, 'log': false}},
+        'C56'        : {'state': false, 'suggest': 'float', 'kwargs': {'low': -5.0e+4, 'high': 5.0e+4, 'step': null, 'log': false}},
         'z_shift'    : {'state': false, 'suggest': 'float', 'kwargs': {'low': -50, 'high': 50, 'step': 10, 'log': false}},
-        'c3'         : {'state': false, 'suggest': 'float', 'kwargs': {'low': 4000, 'high': 10000, 'step': null, 'log': false}},
-        'c5'         : {'state': false, 'suggest': 'float', 'kwargs': {'low': 50000, 'high': 100000, 'step': 5000, 'log': false}},
         'Nlayer'     : {'state': false, 'suggest': 'int', 'kwargs': {'low': 1, 'high': 8, 'step': 1, 'log': false}},
         'dz'         : {'state': false, 'suggest': 'float', 'kwargs': {'low': 4, 'high': 8, 'step': 0.5, 'log': false}},
         'scale'      : {'state': true, 'suggest': 'float', 'kwargs': {'low': 0.8, 'high': 1.2, 'step': 0.02, 'log': false}}, # This modifies the effective scan step size. [scale, asymmetry, rotation, shear] corresponds to 'pos_scan_affine' under 'init_params'
