@@ -184,18 +184,21 @@ class ReconParams(BaseModel):
             "model",
             "constraint",
             "loss",
-            "illumination",
+            "conv_angle",
+            "aberrations",
+            "Ls",
+            "z_shift",
             "dx",
-            "tilt",
             "affine",
+            "tilt"
         ]
     ] = Field(default=["default"], description="Affixes for reconstruction folder name")
     """
     This list specifies the optional affixes to the reconstruction folder name for file management. 
     The order of strings has NO effect to the output folder name. 
     PtyRAD provides high-level presets including 'minimal', 'default', and 'all', while each of them corresponds to a subset of all available options. 
-    There are currently 16 available options, including 'indices', 'meas', 'batch', 'pmode', 'omode', 'nlayer', 'lr', 'optimizer', 'start_iter', 'model', 
-    'constraint', 'loss', 'illumination', 'dx', 'tilt', and 'affine'. 
+    There are currently 19 available options, including 'indices', 'meas', 'batch', 'pmode', 'omode', 'nlayer', 'lr', 
+    'optimizer', 'start_iter', 'model', 'constraint', 'loss', 'conv_angle', 'aberrations', 'Ls', 'z_shift', 'dx', 'affine', and 'tilt'. 
     Each option corresponds to specific fields in the params file. 
     These individual tags can be combined with the presets, e.g. ['minimal', 'tilt']. 
     A typical output folder name of 'default' looks like: 
