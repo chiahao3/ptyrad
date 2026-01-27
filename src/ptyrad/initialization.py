@@ -112,20 +112,20 @@ class Initializer:
         meas = self._load_meas()
         meas = self._process_meas(meas)
 
-        meas_avg = np.mean(meas, axis=0, dtype=np.float32) # This is equivalent to PACBED in electron microscopy. Note that if pad/resample are set to "on_the_fly", this would be different from the final one used for reconstruction.
-        meas_avg_sum = np.sum(meas_avg, dtype=np.float32) # This is the total integrated intensity of the averaged diffraction pattern and is used during probe initialization / normalization
+        meas_avg_pattern = np.mean(meas, axis=0, dtype=np.float32) # (ky, kx), this is equivalent to PACBED in electron microscopy. Note that if pad/resample are set to "on_the_fly", this would be different from the final one used for reconstruction.
+        meas_total_ints = np.sum(meas, axis=(1,2), dtype=np.float32) # (N,), this is the integrated intensities for each individual pattern
         
         pad_mode = get_nested(self.init_params, key=['meas_pad', 'mode'], safe=True, default=None)
         if pad_mode == 'on_the_fly':
             padded = self.init_variables.get('on_the_fly_meas_padded')
             padded_int_sum = padded.sum() if padded is not None else 0
-            vprint(f"Adjusting `meas_avg_sum` by adding {padded_int_sum:.4f} for on_the_fly meas padding", verbose=self.verbose)
-            meas_avg_sum += padded_int_sum # meas_avg_sum is used to normalize the probe intensity. 
+            vprint(f"Adjusting `meas_total_ints` by adding {padded_int_sum:.4f} for on_the_fly meas padding", verbose=self.verbose)
+            meas_total_ints += padded_int_sum # meas_total_ints is used to normalize the probe intensity. 
             # Because the meas could gain intensity during on_the_fly padding, 
             # we need to consider the extra intensity from the padded region here. 
         
-        self.init_variables['meas_avg']     = meas_avg
-        self.init_variables['meas_avg_sum'] = meas_avg_sum
+        self.init_variables['meas_total_ints'] = meas_total_ints
+        self.init_variables['meas_avg_pattern'] = meas_avg_pattern
         self.init_variables['measurements'] = meas
         
         export_params = self.init_params.get('meas_export') # Ture, False, None, dict (could be {})
@@ -134,8 +134,9 @@ class Initializer:
             self._export_meas(export_params if isinstance(export_params, dict) else {})
         
         # Print out some measurements statistics
-        vprint(f"meausrements int. statistics (min, mean, max) = ({meas.min():.4f}, {meas.mean():.4f}, {meas.max():.4f})", verbose=self.verbose)
-        vprint(f"measurements                      (N, Ky, Kx) = {meas.dtype}, {meas.shape}", verbose=self.verbose)
+        vprint(f"Pattern total int. statistics (min, mean, max)        = ({meas_total_ints.min():.4f}, {meas_total_ints.mean():.4f}, {meas_total_ints.max():.4f}), with min/max = {(meas_total_ints.min()/meas_total_ints.max()):.1%}", verbose=self.verbose)
+        vprint(f"Global meausrements int. statistics (min, mean, max)  = ({meas.min():.4f}, {meas.mean():.4f}, {meas.max():.4f})", verbose=self.verbose)
+        vprint(f"measurements                              (N, Ky, Kx) = {meas.dtype}, {meas.shape}", verbose=self.verbose)
         vprint(" ", verbose=self.verbose)
 
     def init_calibration(self):
@@ -1365,7 +1366,7 @@ class Initializer:
         probe = self._probe_permute(probe, self.init_params.get('probe_permute'))
         probe = self._probe_set_pmode_max(probe, pmode_max, pmode_init_pows, orthogonalize=True, sort=True)
         probe = self._probe_z_shift(probe, self.init_params.get('probe_z_shift'))
-        probe = self._probe_normalize(probe, self.init_params.get('probe_normalize'))
+        probe = self._probe_normalization(probe, self.init_params.get('probe_normalization'))
         return probe
 
     def _probe_permute(self, probe, order):
@@ -1437,31 +1438,42 @@ class Initializer:
             probe_shifted = np.fft.ifft2(H[None,] * np.fft.fft2(probe))
             return probe_shifted
     
-    def _probe_normalize(self, probe, norm_cfg):
+    def _probe_normalization(self, probe, norm_cfg):
         """
         Normalize the probe intensity based on the measurements.
         """
-        
-        # TODO Extend this method to support other normalization methods
-        # like the target intensity (vacuum probe), or a scaling factor over meas_avg_sum
         
         # This correction is enforced even the norm_cfg is None (not provided by user)
         if norm_cfg is None:
             norm_cfg = {}
         
+        norm_mode = norm_cfg.get('mode', 'mean_total_ints') # Default to 'mean_total_ints'
+        norm_const = norm_cfg.get('value', None)  # Used for 'target_intensity' mode
+        
+        # Grab meas_total_ints
         try:
-            # Using the pre-calculated meas_avg_sum for probe intensity normalization
+            # Using the pre-calculated meas_total_ints for probe intensity normalization
             # becasue on-the-fly padding could increase the total meas intensity
-            meas_avg_sum = self.init_variables['meas_avg_sum']
+            meas_total_ints = self.init_variables['meas_total_ints']
         except KeyError:
-            vprint("WARNING: Measurement average sum ('meas_avg_sum') not found. Initializing measurements first for probe normalization...", verbose=self.verbose)
+            vprint("WARNING: Measurement total intensities ('meas_total_ints') not found in init.init_variables. Initializing measurements first for probe normalization...", verbose=self.verbose)
             vprint(" ", verbose=self.verbose)
             self.init_measurements()
-            meas_avg_sum = self.init_variables['meas_avg_sum']
+            meas_total_ints = self.init_variables['meas_total_ints']
 
-        normalization_factor = (np.sum(np.abs(probe) ** 2) / meas_avg_sum) ** 0.5
+        vprint(f"Normalizing probe intensity with mode = '{norm_mode}' and value = '{norm_const}'", verbose=self.verbose)
+
+        # Dispatch the normalizing methods
+        if norm_mode == 'mean_total_ints':
+            target_int = meas_total_ints.mean()
+        elif norm_mode == 'max_total_ints':
+            target_int = meas_total_ints.max()
+        elif norm_mode == 'target_intensity':
+            target_int = norm_const
+        
+        normalization_factor = (np.sum(np.abs(probe) ** 2) / target_int) ** 0.5
         probe = probe / normalization_factor
-        vprint(f"sum(|probe_data|**2) = {np.sum(np.abs(probe)**2):.2f}, while meas.mean(0).sum() = {meas_avg_sum:.2f}", verbose=self.verbose)
+        vprint(f"sum(|probe_data|**2) = {np.sum(np.abs(probe)**2):.2f}, while meas_total_ints (min, mean, max) = ({meas_total_ints.min():.4f}, {meas_total_ints.mean():.4f}, {meas_total_ints.max():.4f})", verbose=self.verbose)
         return probe.astype('complex64')
    
     ###### Private methods for initializing positions ######

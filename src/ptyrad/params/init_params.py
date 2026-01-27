@@ -112,6 +112,20 @@ class MeasExport(BaseModel):
     append_shape: bool = Field(default=True, description="Whether to append the shape at the end of the exported file name")
 
 
+class ProbeNormalization(BaseModel):
+    model_config = {"extra": "forbid"}
+    
+    mode: Literal["mean_total_ints", "max_total_ints", "total_intensity"] = Field(default="mean_total_ints", description="Mode to normalize probe intensity")
+    value: Optional[float] = Field(default=None, description="Value used for normalizing probe intensity if mode='target_intensity'")
+    
+    @model_validator(mode='before')
+    def check_normalization_value(cls, values: dict) -> dict:
+        mode = values.get('mode', 'mean_total_ints')
+        value = values.get('value')
+        if mode == 'target_intensity' and value is None:
+            raise KeyError("'value' is required in probe_normalization for mode='target_intensity'.")
+        return values
+
 class ObjZPad(BaseModel):
     model_config = {"extra": "forbid"}
     
@@ -159,6 +173,7 @@ class ObjZResample(BaseModel):
             values.value = float(value)
 
         return values
+
 
 class TiltParams(BaseModel):
     model_config = {"extra": "forbid"}
@@ -489,6 +504,17 @@ class InitParams(BaseModel):
     you'll want to apply a 'probe_z_shift: -50' Ang to the originally reconstructed probe so the relative geometry of probe and object is conserved. 
     """
     
+    probe_normalization: ProbeNormalization = Field(default_factory=ProbeNormalization, description="Normalization method for probe intensity")
+    """
+    type: null or dict. 
+    Choose the normalization method for probe intensity. 
+    i.e., {'mode': 'mean_total_ints'}, or {'mode': 'target_intensity', 'value': 1}. 
+    Available options for 'mode' are 'mean_total_ints' (default), 'max_total_ints', and 'target_intensity'. 
+    For 'target_intensity', you need to provide another dict entry 'value': <VALUE>. 
+    Note that probe intensity should be close to the measurement intensity to make object amplitude ~ 1. 
+    For thick sample with short collection angles, significant amount of electrons are scattered outside of the detector, 
+    use 'max_total_ints' to normalize the probe intensity by the strongest diffraction pattern (ideally vacuum region) for more accurate reconstruction.
+    """
     pos_scan_flipT: Optional[List[int]] = Field(default=None, description="Flip and transpose for scan patterns")
     """
     type: null or list of 3 binary booleans (0 or 1) as [flipup, fliplr, transpose] just like PtychoShleves. 
