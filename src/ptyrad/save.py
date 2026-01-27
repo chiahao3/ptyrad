@@ -272,11 +272,11 @@ def make_output_folder(
         
         "default": ['indices', 'meas', 'batch', 'pmode', 'omode', 'nlayer',
                     'lr', 'model', 'constraint',
-                    'loss', 'affine', 'tilt'],
+                    'loss', 'affine', 'tilt', 'aberrations'],
         
         "all":     ['indices', 'meas', 'batch', 'pmode', 'omode', 'nlayer',
                     'optimizer', 'start_iter', 'lr', 'model', 'constraint',
-                    'loss', 'illumination', 'dx', 'affine', 'tilt']        
+                    'loss', 'conv_angle', 'aberrations', 'Ls', 'z_shift', 'dx', 'affine', 'tilt']        
         }
     
     # Process recon_dir_affixes to expand presets
@@ -467,31 +467,28 @@ def make_output_folder(
             if loss.get("state"):
                 parts.append(f"{tag}{round(loss.get('weight', 0), digits)}")
 
-    # Attach illumination params (optional)
-    if "illumination" in recon_dir_affixes:
-        illumination = init_params["probe_illum_type"]
-        if illumination == "electron":
-            init_conv_angle = init_params["probe_conv_angle"]
-            init_defocus = init_params["probe_defocus"]
-            init_z_shift = init_params["probe_z_shift"]
-            init_c3 = init_params["probe_c3"]
-            init_c5 = init_params["probe_c5"]
-            parts.append(f"ca{init_conv_angle:.3g}")
-            if init_defocus != 0:
-                parts.append(f"df{init_defocus:.3g}")
-            if init_z_shift is not None and init_z_shift != 0:
-                parts.append(f"z_shift{init_z_shift:.3g}")
-            if init_c3 != 0:
-                parts.append(f"c3{format(init_c3, '.0e')}")
-            if init_c5 != 0:
-                parts.append(f"c5{format(init_c5, '.0e')}")
-        elif illumination == "xray":
-            init_Ls = init_params["Ls"]
+    # Attach conv_angle (optional)
+    if "conv_angle" in recon_dir_affixes and "probe_conv_angle" in init_params:
+        parts.append(f"ca{init_params['probe_conv_angle']:.3g}")
+    
+    # Attach aberrations (optional)
+    if "aberrations" in recon_dir_affixes and "probe_aberrations" in init_params:
+        init_aberrations = init_params.get("probe_aberrations")
+        if init_aberrations:
+            for k, v in init_aberrations.items():
+                parts.append(f"{k}_{v:.3g}") # Note that the user values are canonicalized to Krivanek polar during load_params
+    
+    # Attach probe_Ls (optional, for xray only)
+    if "Ls" in recon_dir_affixes and "probe_Ls" in init_params:
+        init_Ls = init_params.get("probe_Ls")
+        if init_Ls is not None:
             parts.append(f"Ls{init_Ls * 1e9:.0f}")
-        else:
-            raise ValueError(
-                f"init_params['probe_illum_type'] = {illumination} not implemented yet, please use either 'electron' or 'xray'!"
-            )
+    
+    # Attach probe_z_shift (optional)
+    if "z_shift" in recon_dir_affixes and "probe_z_shift" in init_params:
+        init_z_shift = init_params.get("probe_z_shift")
+        if init_z_shift is not None and init_z_shift != 0:
+            parts.append(f"z_shift{init_z_shift:.3g}")
 
     # Attach dx (optional)
     if "dx" in recon_dir_affixes:
