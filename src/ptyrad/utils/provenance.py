@@ -27,13 +27,18 @@ class SafeJSONEncoder(json.JSONEncoder):
             return f"<{type(obj).__name__}>"
         return super().default(obj)
 
-def collect_provenance(params):
+def collect_provenance(init_params):
     """
     Step 1: Init. Returns dict of lists: {'probe': [...], 'obj': [...], ...}
     Handles 'simu', 'PtyRAD', 'PtyShv', 'py4DSTEM', 'custom', and 'file' sources.
     """
+    import json
     import os
-    
+
+    import h5py
+
+    from ptyrad.load import load_ptyrad
+
     # 1. Map internal component names to their config keys
     component_config_map = [
         {'name': 'probe', 'src_key': 'probe_source', 'param_key': 'probe_params'},
@@ -46,50 +51,56 @@ def collect_provenance(params):
 
     for comp in component_config_map:
         name = comp['name']
-        source_type = params.get(comp['src_key'])
-        param_data  = params.get(comp['param_key'])
-
-        # --- Dispatcher Logic ---
+        source_type = init_params.get(comp['src_key'])
+        param_data  = init_params.get(comp['param_key'])
 
         # Case A: File-based sources (PtyRAD, PtyShv, py4DSTEM, file)
         if source_type in ['PtyRAD', 'PtyShv', 'py4DSTEM', 'file', 'foldslice_hdf5']:
              
-             # 1. Resolve to absolute path
-             if isinstance(param_data, str):
-                 abs_path = os.path.abspath(param_data)
-             else:
-                 # Fallback if param_data is somehow not a string (e.g. None)
-                 abs_path = "Unknown_Path"
+            # 1. Resolve to absolute path
+            if isinstance(param_data, str):
+                abs_path = os.path.abspath(param_data)
+            else:
+                # Fallback if param_data is somehow not a string (e.g. None)
+                abs_path = "Unknown_Path"
 
-             # 2. Default: Create a "Genesis" entry (Fresh Import)
-             # We assume this is a fresh start unless proven otherwise
-             entry_list = [_create_genesis_entry(
-                 action=f'Imported {source_type}',
-                 details={'original_path': abs_path},
-                 name=abs_path
-             )]
+            # 2. Default: Create a "Genesis" entry (Fresh Import)
+            # We assume this is a fresh start unless proven otherwise
+            entry_list = [_create_genesis_entry(
+                action=f'Imported {source_type}',
+                details={'original_path': abs_path},
+                name=abs_path
+            )]
 
-             # 3. Inheritance Check (Only for PtyRAD)
-             # If it's a PtyRAD file, we try to overwrite the genesis entry with real history
-             if source_type == 'PtyRAD' and os.path.exists(abs_path):
-                 try:
-                     with h5py.File(abs_path, 'r') as f:
-                         # Try to get the history string
-                         json_str = f.attrs.get('provenance_json', None)
-                         
-                         if json_str:
-                             parent_full_prov = json.loads(json_str)
-                             inherited_list = parent_full_prov.get(name, [])
-                             
-                             if inherited_list:
-                                 # SUCCESS: We found a bloodline. Use it instead of the genesis entry.
-                                 entry_list = inherited_list
-                                 
-                 except Exception as e:
-                     print(f"[Provenance Warning] Failed to check history in {abs_path}: {e}")
-            
-             # Assign the result (either the fresh genesis or the inherited list)
-             provenance[name] = entry_list
+            # 3. PtyRAD Special Handling (Inheritance or Legacy Extraction)
+            if source_type == 'PtyRAD' and os.path.exists(abs_path):
+                try:
+                    with h5py.File(abs_path, 'r') as f:
+                        json_str = f.attrs.get('provenance_json', None)
+                        
+                    if json_str:
+                        # Modern File: Inherit the bloodline
+                        parent_full_prov = json.loads(json_str)
+                        inherited_list = parent_full_prov.get(name, [])
+                        if inherited_list:
+                            entry_list = inherited_list
+                        
+                    else:
+                        # Legacy PtyRAD File: Enhance the Genesis Entry
+                        # Extract version and params
+                        ckpt = load_ptyrad(abs_path, verbose=False)
+                        ver = ckpt.get('ptyrad_version')
+                        legacy_params = ckpt.get('params')
+
+                        # UPDATE the entry
+                        entry_list[0]['action'] = f'Imported PtyRAD {ver}'
+                        if legacy_params:
+                            entry_list[0]['metadata']['legacy_params'] = legacy_params
+
+                except Exception as e:
+                    print(f"[Provenance Warning] Failed to inspect {abs_path}: {e}")
+        
+            provenance[name] = entry_list
 
         # Case B: Simulation
         elif source_type == 'simu':
@@ -132,6 +143,8 @@ def _create_genesis_entry(action, details, name="Unknown Source"):
 def generate_provenance_json(current_provenance, params, output_filename="current_run"):
     import copy
     import os
+
+    from ptyrad import __version__
     
     # Ensure we log the FULL path, not just 'output.h5'
     # Check if it looks like a file path (contains separator or extension)
@@ -144,6 +157,7 @@ def generate_provenance_json(current_provenance, params, output_filename="curren
     run_entry = {
         'uid': str(uuid.uuid4())[:8],
         'timestamp': datetime.datetime.now().isoformat(),
+        'ptyrad_version': __version__,
         'run_name': run_identifier, # <--- Will now be /home/user/exp/output.h5
         'note': params.get('experiment_note', 'PtyRAD Run'),
         'params': params

@@ -373,7 +373,7 @@ def load_mat(
         )    
 
 def load_hdf5(
-    file_path: str, key: KeyType = None, delimiter: str = "."
+    file_path: str, key: KeyType = None, delimiter: str = ".", verbose: bool = True,
 ) -> Union[np.ndarray, dict[str, np.ndarray]]:
     """
     Load dataset(s) from an HDF5 file, recursively if groups are encountered.
@@ -385,6 +385,7 @@ def load_hdf5(
             - If str: Load a single dataset or group. Supports hierarchical keys (e.g., 'group1.dataset1').
             - If list[str]: Load multiple datasets. The returned dictionary will have a flattened structure with the hierarchical key strings as keys.
         delimiter (str): Delimiter for hierarchical keys (default: ".").
+        verbose (bool): Flag to print verbose messages, default is True.
 
     Returns:
         data (np.ndarray or dict): The loaded dataset(s).
@@ -440,17 +441,17 @@ def load_hdf5(
     with h5py.File(file_path, "r") as hf:
         if key in (None, "", []):
             file_dict = {k: _recursively_load(hf[k]) for k in hf.keys()}
-            vprint(f"Success! Loaded .hdf5 file as a dict from path = '{file_path}'")
+            vprint(f"Success! Loaded .hdf5 file as a dict from path = '{file_path}'", verbose=verbose)
             return file_dict
 
         elif isinstance(key, str):
             data = _recursively_load(hf, key=key, delimiter=delimiter)
             vprint(
-                f"Success! Loaded .hdf5 file with key = '{key}' from path = '{file_path}'"
+                f"Success! Loaded .hdf5 file with key = '{key}' from path = '{file_path}'", verbose=verbose
             )
             if isinstance(data, np.ndarray):
-                vprint(f"Imported .hdf5 data shape = {data.shape}")
-                vprint(f"Imported .hdf5 data type = {data.dtype}")
+                vprint(f"Imported .hdf5 data shape = {data.shape}", verbose=verbose)
+                vprint(f"Imported .hdf5 data type = {data.dtype}", verbose=verbose)
             return data
 
         elif isinstance(key, list):
@@ -474,7 +475,7 @@ def load_hdf5(
                 )
 
             vprint(
-                f"Success! Loaded .hdf5 file as a dict with keys = {key} from path = '{file_path}'"
+                f"Success! Loaded .hdf5 file as a dict with keys = {key} from path = '{file_path}'", verbose=verbose
             )
             return datasets_dict
 
@@ -483,7 +484,7 @@ def load_hdf5(
                 f"`key` must be None, a string, or a list of strings but got key = '{key}'"
             )
 
-def load_pt(file_path, weights_only=False):
+def load_pt(file_path, weights_only=False, verbose: bool = True):
     import torch
 
     # Check if the file exists
@@ -496,10 +497,10 @@ def load_pt(file_path, weights_only=False):
     # Because PtyRAD .pt isn't a true PyTorch model, so `weights_only=True` would break this critical loading function.
     # However, `weights_only=False` has potential risk if the .pt file contains malicious code, so please only use this `load_pt` for PtyRAD-generated .pt file.
     
-    vprint("Success! Loaded .pt file path =", file_path)
+    vprint("Success! Loaded .pt file path =", file_path, verbose=verbose)
     return data
 
-def load_ptyrad(file_path: str) -> Dict[str, Any]:
+def load_ptyrad(file_path: str, verbose: bool = True) -> Dict[str, Any]:
     """
     Load PtyRAD reconstruction files based on their file extension.
 
@@ -509,6 +510,7 @@ def load_ptyrad(file_path: str) -> Dict[str, Any]:
 
     Args:
         file_path (str): Path to the file to be loaded.
+        verbose (bool): Flag to print verbose messages, default is True.
 
     Returns:
         Any: The loaded data, typically as a numpy array or dictionary, depending on the file type.
@@ -537,12 +539,12 @@ def load_ptyrad(file_path: str) -> Dict[str, Any]:
     ext = ext.lower()
 
     if ext in [".h5", ".hdf5"]:
-        return load_hdf5(file_path)
+        return load_hdf5(file_path, verbose=verbose)
 
     elif ext == ".pt":
-        vprint("WARNING: Loading PtyRAD reconstruction from .pt file is deprecated and will likely be removed by 2025 Aug.")
-        vprint("INFO: PtyRAD reconstruction output has been using .hdf5 format since v0.1.0b7.")
-        return tensors_to_ndarrays(load_pt(file_path)) # .pt is supported for backward compatibility before 0.1.0b7. (e.g. PtyRAD reconstructions used for the paper)
+        vprint("WARNING: Loading PtyRAD reconstruction from .pt file is deprecated and will likely be removed by 2025 Aug.", verbose=verbose)
+        vprint("INFO: PtyRAD reconstruction output has been using .hdf5 format since v0.1.0b7.", verbose=verbose)
+        return tensors_to_ndarrays(load_pt(file_path, verbose=verbose)) # .pt is supported for backward compatibility before 0.1.0b7. (e.g. PtyRAD reconstructions used for the paper)
     
     else:
         raise ValueError(
