@@ -10,9 +10,7 @@ init_params : {
     'probe_illum_type'       : 'electron', # type: str. Choose between 'electron' or 'xray'
     'probe_kv'               : 80, # type: float, unit: kV. Acceleration voltage for relativistic electron wavelength calculation
     'probe_conv_angle'       : 24.9, # type: float, unit: mrad. Semi-convergence angle for probe-forming aperture
-    'probe_defocus'          : 0, # type: float, unit: Ang. Defocus (-C1) aberration coefficient for the probe. Positive defocus here refers to actual underfocus or weaker lens strength following Kirkland/abtem/ptychoshelves convention
-    'probe_c3'               : 0, # type: float, unit: Ang. 3rd-order spherical aberration coefficient (C3) for the simulated probe
-    'probe_c5'               : 0, # type: float, unit: Ang. 5th-order spherical aberration coefficient (C5) for the simulated probe
+    'probe_aberrations'      : {'defocus': 0}, # type: dict or null. Aberration coefficients in Angstroms, angles are in degrees. Supports Krivanek (polar and cartesian), Haider notations, or a mix of them. i.e., {'C10': 200, 'A1': 50, 'A1phi': 25, 'C21a': 300, 'C23': 400, 'phi23': 25, 'Cs': 5000}. Common aliases like `defocus` and `Cs` are also supported. Note that C10 = -df, and positive C10 refers to underfocus (weaker lens) following Kirkland/abtem convention.    
     'meas_Npix'              : 128, # type: integer, unit: px (k-space). Detector pixel number, EMPAD is 128. Only supports square detector for simplicity
     'pos_N_scans'            : 16384, # type: int, unit: #. Number of probe positions (or equivalently diffraction patterns since 1 DP / position)
     'pos_N_scan_slow'        : 128, # type: int, unit: #. Number of scan position along slow scan direction. Usually it's the vertical direction of acquisition GUI
