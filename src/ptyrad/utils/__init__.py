@@ -40,7 +40,7 @@ from .common import (  # noqa: F401
     vprint,
     vprint_nested_dict,
 )
-from .grouping import ( # noqa: F401
+from .grouping import (  # noqa: F401
     get_hilbert_key,
     remap_batches_to_global,
     sparse_sampler_fps,
@@ -80,4 +80,9 @@ from .physics import (  # noqa: F401
     near_field_evolution_torch,
     orthogonalize_modes_vec_np,
     sort_by_mode_int_np,
+)
+from .provenance import (  # noqa: F401
+    collect_provenance,
+    generate_provenance_json,
+    save_provenance_to_hdf5,
 )

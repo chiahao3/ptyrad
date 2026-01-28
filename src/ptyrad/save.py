@@ -11,7 +11,15 @@ import numpy as np
 import torch
 from tifffile import imwrite
 
-from ptyrad.utils import get_time, normalize_by_bit_depth, safe_filename, vprint, expand_presets
+from ptyrad.utils import (
+    expand_presets,
+    generate_provenance_json,
+    get_time,
+    normalize_by_bit_depth,
+    safe_filename,
+    save_provenance_to_hdf5,
+    vprint,
+)
 
 ###### These are data saving functions ######
 
@@ -571,8 +579,12 @@ def save_results(output_path, model, params, optimizer, niter, indices, batch_lo
     iter_str = '_iter' + str(niter).zfill(4)
     
     if 'model' in save_result_list:
+        hdf5_file_path = safe_filename(os.path.join(output_path, f"model{collate_str}{iter_str}.hdf5"))
         save_dict = make_save_dict(output_path, model, params, optimizer, niter, indices, batch_losses)
-        save_dict_to_hdf5(save_dict, safe_filename(os.path.join(output_path, f"model{collate_str}{iter_str}.hdf5")))
+        save_dict_to_hdf5(save_dict, hdf5_file_path)
+
+        provenance_json_str = generate_provenance_json(current_provenance=model.recon_provenance, params=params, output_filename=hdf5_file_path)
+        save_provenance_to_hdf5(hdf5_file_path, provenance_json_str)
 
     probe          = model.get_complex_probe_view()
     probe_amp      = probe.permute(1,0,2).flatten(1).abs().detach().cpu().numpy() # (pmode, Y, X) -> Permute (Y, pmode, X) -> Flatten (Y, pmode*X)

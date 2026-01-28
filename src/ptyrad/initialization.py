@@ -18,6 +18,7 @@ from scipy.ndimage import gaussian_filter, zoom
 from ptyrad.load import load_array_from_file, load_hdf5, load_mat, load_ptyrad
 from ptyrad.save import save_array
 from ptyrad.utils import (
+    collect_provenance,
     complex_object_z_resample_torch,
     compose_affine_matrix,
     create_one_hot_mask,
@@ -617,6 +618,7 @@ class Initializer:
         self.init_H()
         self.init_obj_tilts()
         self.init_check()
+        self._collect_provenance()
         
         return self
     
@@ -1941,3 +1943,12 @@ class Initializer:
             obj_final = np.concatenate((obj, new_modes), axis=0)
             
         return obj_final
+    
+    ###### Private methods for collecting provenance ######
+    def _collect_provenance(self):
+        """
+        Collect reconstruction history (i.e., provenance) and params from loaded reconstructions.
+        This is used to track the full history of sequential econstructions.
+        """
+        recon_provenance = collect_provenance(self.init_params)
+        self.init_variables['recon_provenance'] = recon_provenance

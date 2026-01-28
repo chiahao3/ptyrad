@@ -131,6 +131,7 @@ class PtychoAD(torch.nn.Module):
             self.iter_times             = []
             self.dz_iters               = []
             self.avg_tilt_iters         = []
+            self.recon_provenance       = init_variables['recon_provenance']
 
             # Create grids for shifting
             self.create_grids()
