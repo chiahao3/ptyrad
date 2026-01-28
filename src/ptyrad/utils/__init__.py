@@ -83,6 +83,8 @@ from .physics import (  # noqa: F401
 )
 from .provenance import (  # noqa: F401
     collect_provenance,
+    export_hdf5_provenance_to_json,
     generate_provenance_json,
+    load_provenance_from_h5,
     save_provenance_to_hdf5,
 )
