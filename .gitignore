@@ -1,8 +1,4 @@
 # Directories that don't need to backup
-demo/data/*
-!demo/data/data_url.txt
-logs/
-output/
 __pycache__
 *.sqlite3
 # setuptools build artifacts

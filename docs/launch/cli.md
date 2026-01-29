@@ -22,5 +22,5 @@ ptyrad print-system-info
 **Export PtyRAD preprocessed measurements data**
 ```bash
 # Exporting measurements data for easy visualization and analysis
-ptyrad export-meas-init --params_path params/tBL_WSe2_reconstruct.yaml --output data/ptyrad_init_meas.hdf5 --reshape 128 128 128 128 --append
+ptyrad export-meas --params_path params/tBL_WSe2_reconstruct.yaml --output data/ptyrad_init_meas.hdf5 --reshape 128 128 128 128 --append
 ```
