@@ -5,6 +5,77 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.0b12] - 2025-09-30
+### Added
+- Add `pos_recenter` constraint to remove potential global offset from cropping positions. This will help keeping probe, position, and object relatively in place.
+- Add `get_error_distribution.ipynb`, `read_ptyrad_output_hdf5.ipynb`, and `get_local_obj_tilts.ipynb` (issue #15) to `demo/scripts/analysis/`
+### Changed
+- Refactor `plot_probe_modes` so it can take either 1 or 2 input probes for easier visualization
+- Fix incorrect probe shifting direction in `obj_z_recenter` so it can shift the object and probe correctly
+- Explictly assign device for `near_field_evolution_torch` in `obj_z_recneter` constraint so it can correctly work on multi-GPU machines when assigned device != 'cuda'
+- Improve `obj_z_recenter` constraint by approximating `torch.quantile` so it can operate on large tensors with more than 16.7M elements; Add `approx_torch_quantile` to `ptyrad.utils.math_ops`.
+- Fix missing cache initialization in `init_cache` for `init_obj_tilts` as mentioned in issue #24 by @yifengh3
+- Rename `probe_add_df` into `probe_z_shift` for clarity as mentioned in issue #18. Positive value means propagate the probe forward (increasing z depth).
+- Fix a torch.compile edge case in `get_probe`s when position learning rate = 0. len(indices) would be treated incorrectly as a FakeTensor despite it should just be an int from len(np.ndarray).
+- Remove a pair of fftshifts in `imshift_batch` and adjust the k-space grid accordingly in `create_grids`. This improves the forward pass efficiency without affecting the reconstruction.
+- Allow `pruner_params` to be null during pydantic validation as mentioned in issue #20 by @GeriTopore
+
+## [0.1.0b11] - 2025-08-21
+### Added
+- Add `obj_z_resample` preprocessing to `init_params` so we can reslice the object along depth dimension to adjust the slice thickness without changing total thickness. This is useful for refining an existing multislice restruction with finer slices as mentioned in issue #5, or to convert between single <-> multislice object
+- Add `obj_z_pad` preprocessing to `init_params` so we can pad more depth slices with 'vacuum', 'mean', or 'edge' options. This is useful for re-centering or expanding the loaded/initialized object along depth as mentioned in issue #5, or to quickly experiment the total thickness.
+- Add `obj_z_crop` preprocessing to `init_params` so we can remove unwanted depth slices. This is useful for re-centering the loaded/initialized object along depth as mentioned in issue #5
+- Add `obj_z_recenter` constraint to keep the multislice object centered within depth by measuring object CoM and adjusting probe defocus accordingly. This is useful when there're vacuum region around the object. This is in response to issue #5 suggested by @HanHsuanWu.
+- Add `probe_add_df` to `init_params` so we can adjust defocus of loaded probe, which could help the multislice object z-recentering; Add `add_df` as new hypertunable params to sweep additional defocus of loaded probe; Add `probe_add_df` to the illumination preset of `recon_dir_affixes` for folder name
+- Enable `probe_pmode_max` and `obj_omode_max` to automatically pad the mixed states if the loaded probe/object has fewer modes than the specified number of modes as suggested by @Xinyan-Li; Add numpy version of `orthogonalize_modes_vec_np` and `sort_by_mode_int_np` to utils; improve `check_modes_ortho` with automatic np.ndarray-to-torch.tensor casting
+- Enable `start_iter`, `step`, and `end_iter` for more flexible control of iter-wise constraints. This change is backward compatible. Original key of `freq` is still supported but is deprecated and will be removed in future
+- Improve reproducibility by adding `--seed` to CLI argument and `init_params.random_seed` to params file. Randomness includes object and position initialization, measurements Poisson noise, batches, and shuffling, etc. The seed is automatically set to 42 if not specified in multiGPU optimization, where we need exact same initialzation across devices.
+- Enable `start_iter` for torch.compile and multiGPU in response to issue #13 via manual recompilation; Add `end_iter` to `update_params` to further control grads for optimizable tensors
+### Changed
+- Change the appended digit of scan affines for clearer display. scale and asymmetry has been changed from `.2g` to `.2f`, while rotation and shear are changed from `.2g` to `.1f` so 3-digits angle like 179.5 degree can be displayed properly.
+- Improve `init_calibration` logging clarity by displaying the final RBF, Npix, and suggested probe_mask_k radius after meas_resample despite resampling won't change the ratio
+
+## [0.1.0b10] - 2025-07-23
+### Added
+- Add `compiler_configs` to `recon_params` to allow optional PyTorch JIT compilation for significant speedup (1.9x faster on PSO tested on A100 20gb MIG). Special thanks to @dy327 and @guanxing.li for helping me testing on macOS and Windows machines! Currently the `torch.compile` works for Windows, macOS, and Linux, although it has a bit more hardware/firmware requirements including:
+  - Windows users would need to install `triton-windows` 
+  - NVIDIA GPU needs to have Compute Capability >7.0 (Volta architecture or newer).
+  - NVIDIA GPU needs to get a more modern driver version, 520.61.05 is known to be not working.
+### Changed
+- Add CUDA Compute Capability and `torch.compile` Triton info to `print_gpu_info`
+- Improve `print_system_info` by adding `platform.platform()` to show user-facing macOS version string
+- Fix incorrect MPS device count for macOS in `set_accelerator` so the CLI command of `ptyrad run` can pass the accelerator initialization
+- Add CPU fallback to `orthogonalize_modes_vec` since MPS doesn't seem to have implemented `torch.linalg.eig` yet as pointed out by @dy327
+- Fix incorrect type check for `init_tilts` to allow float values of initial tilts as pointed out by @dy327
+
+## [0.1.0b9] - 2025-07-10
+### Changed
+- Update README with new installation guide and references to docs, youtube, and other links
+- Change the output shape of propagated probe amplitude from a binned 2D tableau into a 3D stack
+- Fix incorrect caching of H for an edge case of fixed but non-zero pos-dependent tilts; Fix incorrect indexing for `model.get_propagated_probe` of pos-dependent tilts; Refactor and improve `model.get_propagators` by unifying grid usage; Remove unused propagator-related functions from `utils.physics.py`
+- Allow `plot_obj_tilts` and `plot_slice_thickness` to savie figures even for fixed tilts and thickness by appending results to model regardless; Add a safety guard to skip quiver plot of effective 0 tilt; Update demo params files comments regarding available selected_figs; Update recon_params to add the missing figure options
+- Update `FilePathWithKey` in `init_params.py` so we can load '.raw' file with arbitrary shape, offset, and gap
+- Fix incorrect modes orthogonalization (missing .conj()) in `orthogonalize_modes_vec` in response to issue #11 as pointed out by @dong-zehao. This error doesn't negatively impact results but just produce probe modes that aren't really orthognal with each other; Update check_modes_ortho in utils.dev_tools.py so it can check complex modes as well
+
+## [0.1.0b8] - 2025-07-02
+### Added
+- **Add `params/` module to enable params default filling, type check, and validation via pydantic**. This adds a new dependency (`pydantic`) but greatly enhances the robustness of PtyRAD and promotes "fail early" philosophy reggarding params configuration. Default filling makes it possible to create a minimal params file with ~ 15 fields. The validation would check for variable types, option availability, and file existence, etc.
+- Add demo `tBL_WSe2_reconstruct_minimal.yml` params file for demonstration
+- Allow `tilt_source` to take `file` option so we can load object tilts from file. This is suggested by @zb87
+- Add `meas_normalization` option to demo params files
+- Add 'force' boolean option to `meas_remove_neg_values` so that we can subtract values from measurements without negative values
+- Add versioning strings to demo params/notebooks for calrity
+- Allow fine-grained control of output folder name by adding high-level presets including 'minimal', 'default', and 'all' to `recon_dir_affixes` in `recon_params` while supporting 16 individual control options as well. **High-level presets would introduce a breaking change for previous params files.** 
+### Changed
+- Update `load_params` to include the validation logic and option
+- Update CLI `run` to include optional validation (--skip_validate)
+- Update CLI `validate-param`s command so we can simplify validate the params files in command line
+- Simplify `_process_meas` by removing unnecessary neg correction and normalization
+- Improve `_meas_add_poisson_noise` by adding built-in negative values check and switching to global normalization to maintain relative intensity between each pattern
+- Move Slurm scripts to demo/scripts for simplicity
+- Change `prefix_date` option in `recon_params` into `prefix_time` to enable more control of the time format prepended to the output folder name. Default time format is 'date' for output folder, and 'datetime' for the output log file. **This introduces a breaking change for previous params files.** 
+- Fix `_tilt` recon folder name appending when 'tilt_type' : 'each' otherwise it was appending all (N,2) values
+
 ## [0.1.0b7] - 2025-05-30
 ### Added
 - Add CLI command `ptyrad export-meas-init` to allow quick exporting initialized measurement arrays to disk with specified file types (.mat, .hdf5, .tif, .npy)

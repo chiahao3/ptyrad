@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import pathlib
 from typing import Any, Dict, List, Literal, Optional, Union, get_args
 
@@ -916,3 +918,9 @@ class InitParams(BaseModel):
             if isinstance(data[field], FilePathWithKey):
                 data[field].__dict__['path'] = str(data[field].__dict__['path'])
         return data
+
+__all__ = [
+    name for name, obj in globals().items()
+    if getattr(obj, "__module__", None) == __name__
+    and hasattr(obj, "model_fields")  # pydantic
+]

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -311,3 +313,9 @@ class ReconParams(BaseModel):
         if self.compiler_configs is None:
             self.compiler_configs = CompilerConfigs()
         return self
+
+__all__ = [
+    name for name, obj in globals().items()
+    if getattr(obj, "__module__", None) == __name__
+    and hasattr(obj, "model_fields")  # pydantic
+]

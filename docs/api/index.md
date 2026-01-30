@@ -11,12 +11,15 @@ For typical usage, see the Using PtyRAD and Tutorials sections.
 ```{eval-rst}
 .. autosummary::
    :toctree: ../_autosummary
-   :template: custom-module-template.rst
    :recursive:
 
    ptyrad.cli
+   ptyrad.params
+   ptyrad.solver
    ptyrad.reconstruction
+   ptyrad.hypertune
    ptyrad.initialization
+   ptyrad.dataloader
    ptyrad.models
    ptyrad.forward
    ptyrad.losses

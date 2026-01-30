@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import Any, Dict, Optional, Union
 
 import torch.optim
@@ -164,3 +166,9 @@ class ModelParams(BaseModel):
     update_params: UpdateParams = Field(
         default_factory=UpdateParams, description="Update parameters for optimizable tensors"
     )
+
+__all__ = [
+    name for name, obj in globals().items()
+    if getattr(obj, "__module__", None) == __name__
+    and hasattr(obj, "model_fields")  # pydantic
+]

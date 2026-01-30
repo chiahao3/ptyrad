@@ -1,5 +1,8 @@
 # Requirements.txt used by Read The Docs
 
+# Use the CPU version pytorch to speed up RTD building
+--extra-index-url https://download.pytorch.org/whl/cpu
+
 # Install ptyrad
 -e .
 
@@ -21,3 +24,4 @@ myst-parser[linkify]==4.0.1
 sphinx-autodoc-typehints==3.2.0
 sphinx-design==0.6.1
 sphinx-togglebutton==0.3.2
+autodoc_pydantic==2.2.0

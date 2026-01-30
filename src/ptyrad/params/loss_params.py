@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import List, Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -113,3 +115,9 @@ class LossParams(BaseModel):
             raise ValueError("At least one of loss_single, loss_poissn, or loss_pacbed must have state: true")
 
         return self
+    
+__all__ = [
+    name for name, obj in globals().items()
+    if getattr(obj, "__module__", None) == __name__
+    and hasattr(obj, "model_fields")  # pydantic
+]

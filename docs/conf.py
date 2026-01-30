@@ -11,7 +11,7 @@ import sys
 sys.path.insert(0, os.path.abspath('../src'))
 
 project = 'PtyRAD'
-copyright = '2025'
+copyright = '2026'
 author = 'Chia-Hao Lee'
 
 # -- General configuration ---------------------------------------------------
@@ -24,6 +24,7 @@ extensions = [
     "sphinx.ext.viewcode",
     "sphinx_design", # Allows tab, grid card, drop down and more
     "sphinx_togglebutton", 
+    "sphinxcontrib.autodoc_pydantic", 
     "myst_parser",            
 ]
 
@@ -31,14 +32,22 @@ templates_path = ['_templates']
 exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
 
 autodoc_default_options = {
-    'members': False,
+    "members": True, # This must be true to get autodoc_pydantic showing model fields
+    "undoc-members": False,
     'inherited-members': False,
     'show-inheritance': False,
 }
 
 exclude_patterns = [] # Exclude api could also make the build much faster
 autosummary_generate = True # This controls the api autosummary, which is quite slow. Toggle off for faster build while testing other pages.
-templates_path = ["_templates"]
+
+# autodoc_pydantic
+autodoc_pydantic_model_show_json = False
+autodoc_pydantic_model_show_config_summary = False
+autodoc_pydantic_model_show_field_summary = True
+autodoc_pydantic_model_show_field_list = True
+autodoc_pydantic_model_show_validator_summary = False
+autodoc_pydantic_model_member_order = 'bysource'
 
 # More comprehensive MyST configuration
 myst_enable_extensions = [

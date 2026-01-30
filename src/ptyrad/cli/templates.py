@@ -1,3 +1,8 @@
+"""
+CLI utility functions for setting up fresh project folder, and exporting templates / examples params files
+
+"""
+
 import shutil
 import sys
 from pathlib import Path

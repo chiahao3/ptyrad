@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import warnings
 from typing import Any, Dict, Literal, Optional
 
@@ -303,3 +305,9 @@ class HypertuneParams(BaseModel):
     See https://optuna.readthedocs.io/en/stable/reference/generated/optuna.trial.Trial.html#optuna.trial.Trial 
     for the syntax to configure the search space ranges and types
     """
+    
+__all__ = [
+    name for name, obj in globals().items()
+    if getattr(obj, "__module__", None) == __name__
+    and hasattr(obj, "model_fields")  # pydantic
+]

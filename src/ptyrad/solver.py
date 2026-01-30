@@ -1,5 +1,5 @@
 """
-High-level interface for PtyRAD workflows, including reconstruction and hypertune modes
+High-level solver interface for PtyRAD workflows, including reconstruction and hypertune modes
 
 """
 

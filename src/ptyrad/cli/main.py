@@ -1,5 +1,5 @@
 """
-Command Line Interface (CLI) of PtyRAD, including running reconstructions, checking system information, and others
+Main entry point for the PtyRAD Command-Line Interface
 
 """
 
