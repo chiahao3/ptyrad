@@ -7,12 +7,12 @@
 These files are called *"params files"* and contains 6 nested dictionaries with a total of more than 100 fields, making *PtyRAD* extremely customizable and flexible for each reconstruciton task.
 
 For example, a complete *PtyRAD* params file includes: 
-1. `init_params`
-2. `hypertune_params` (optional)
-3. `model_params`
-4. `loss_params`
-5. `constraint_params`
-6. `recon_params`
+1. `init_params`       (required)
+2. `hypertune_params`  (only needed in hypertune mode)
+3. `model_params`      (optional)
+4. `loss_params`       (optional)
+5. `constraint_params` (optional)
+6. `recon_params`      (optional)
 
 These nested dictionaries can be provided by a range of common file formats, including the native `.py`, `.json`, `.toml`, or `.yaml`.
 

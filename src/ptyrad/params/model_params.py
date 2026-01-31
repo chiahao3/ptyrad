@@ -1,3 +1,8 @@
+"""
+Defines available options and validation rules for the "model_params" dictionary.
+
+"""
+
 from __future__ import annotations
 
 from typing import Any, Dict, Optional, Union
@@ -99,8 +104,6 @@ class UpdateParams(BaseModel):
 
 class ModelParams(BaseModel):
     """
-    "model_params" determines the forward model behavior, the optimizer configuration, and the learning of the PyTorch model (PtychoAD)
-
     optimizer configurations are specified in 'optimizer_params', see https://pytorch.org/docs/stable/optim.html for detailed information of available optimizers and configs.
     update behaviors of optimizable variables (tensors) are specified in 'update_params'.
     'start_iter' specifies the iteration at which the variables (tensors) can start being updated by automatic differentiation (AD)
@@ -167,8 +170,9 @@ class ModelParams(BaseModel):
         default_factory=UpdateParams, description="Update parameters for optimizable tensors"
     )
 
+# Make explicit list so autodoc_pydantic can sort by this when go by `autodoc_pydantic_model_member_order = 'bysource'` in conf.py
 __all__ = [
-    name for name, obj in globals().items()
-    if getattr(obj, "__module__", None) == __name__
-    and hasattr(obj, "model_fields")  # pydantic
+    "ModelParams",
+    "OptimizerParams",
+    "UpdateParams"
 ]

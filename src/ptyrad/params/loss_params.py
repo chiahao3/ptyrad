@@ -1,3 +1,7 @@
+"""
+Defines available options and validation rules for the "loss_params" dictionary.
+"""
+
 from __future__ import annotations
 
 from typing import List, Literal
@@ -33,7 +37,7 @@ class LossPacbed(BaseModel):
 class LossSparse(BaseModel):
     model_config = {"extra": "forbid"}
 
-    state: bool = Field(default=True, description="Enable/disable loss_sparse term")
+    state: bool = Field(default=False, description="Enable/disable loss_sparse term")
     weight: float = Field(default=0.1, ge=0.0, description="Weight of loss_sparse term")
     ln_order: int = Field(default=1, ge=1, description="L_n norm order for object phase (n >= 1)")
 
@@ -50,8 +54,6 @@ class LossSimlar(BaseModel):
 
 class LossParams(BaseModel):
     """
-    "loss_params" determines the individual loss terms for the CombinedLoss used for PtyRAD reconstruction
-    
     Generally, the reconstruction loss is the CombinedLoss = weight1 * loss1 + weight2 * loss2 + weight3 * loss3 ...
     Use 'state' to switch on/off each loss term, and use 'weight' to determine their relative importance. 
     Each loss term would generate their corresponding gradient to the variable, 
@@ -89,8 +91,8 @@ class LossParams(BaseModel):
     loss_sparse: LossSparse = Field(default_factory=LossSparse, description="L_n norm regularization for object phase")
     """
     L_n norm regularization calculated for object phase. 
-    'ln_order' means the L_n norm (|a_i^n|^(1/n)) used to regularize object phase ('objp'). 
-    Usually 'ln_order' is set at 1 for L1 norm (|a|), this promotes 0 in the objp and enhance the sparsity (i.e. discrete atoms). 
+    'ln_order' means the L_n norm :math:`(|a_i^n|^{(1/n)})` used to regularize object phase ('objp'). 
+    Usually 'ln_order' is set at 1 for L1 norm :math:`(|a|)`, this promotes 0 in the objp and enhance the sparsity (i.e. discrete atoms). 
     'ln_order' = 2 would be equivalent to L2 norm that promotes near-0 values
     """
     
@@ -115,9 +117,13 @@ class LossParams(BaseModel):
             raise ValueError("At least one of loss_single, loss_poissn, or loss_pacbed must have state: true")
 
         return self
-    
+
+# Make explicit list so autodoc_pydantic can sort by this when go by `autodoc_pydantic_model_member_order = 'bysource'` in conf.py
 __all__ = [
-    name for name, obj in globals().items()
-    if getattr(obj, "__module__", None) == __name__
-    and hasattr(obj, "model_fields")  # pydantic
+    "LossParams",
+    "LossSingle",
+    "LossPoissn",
+    "LossPacbed",
+    "LossSparse",
+    "LossSimlar"
 ]

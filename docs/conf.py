@@ -41,13 +41,18 @@ autodoc_default_options = {
 exclude_patterns = [] # Exclude api could also make the build much faster
 autosummary_generate = True # This controls the api autosummary, which is quite slow. Toggle off for faster build while testing other pages.
 
-# autodoc_pydantic
-autodoc_pydantic_model_show_json = False
-autodoc_pydantic_model_show_config_summary = False
-autodoc_pydantic_model_show_field_summary = True
-autodoc_pydantic_model_show_field_list = True
+# Autodoc Pydantic configuration
+autodoc_pydantic_model_show_json = False # Looks ugly since my fields are often pydantic models as well
+autodoc_pydantic_model_show_config_summary = False # Useless since the only config is forbid-extra
 autodoc_pydantic_model_show_validator_summary = False
+autodoc_pydantic_model_show_validator_members = False
+autodoc_pydantic_model_show_field_summary = True
 autodoc_pydantic_model_member_order = 'bysource'
+autodoc_pydantic_model_summary_list_order = 'bysource'
+autodoc_pydantic_field_list_validators = False
+autodoc_pydantic_field_show_constraints = False
+autodoc_pydantic_field_signature_prefix = "param"
+autodoc_pydantic_field_doc_policy = "docstring"
 
 # More comprehensive MyST configuration
 myst_enable_extensions = [

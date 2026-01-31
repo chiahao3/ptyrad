@@ -1,3 +1,7 @@
+"""
+Defines available options and validation rules for the "constraint_params" dictionary.
+"""
+
 from __future__ import annotations
 
 from typing import List, Literal, Optional
@@ -12,6 +16,7 @@ class OrthoPmode(BaseModel):
     start_iter: Optional[int] = Field(default=1, ge=1, description="Start iteration of applying orthogonalization to mixed-state probe")
     step: Optional[int] = Field(default=1, ge=1, description="Interval of iterations of applying orthogonalization to mixed-state probe")
     end_iter: Optional[int] = Field(default=None, ge=1, description="End iteration of applying orthogonalization to mixed-state probe")
+
 
 class ProbeMaskK(BaseModel):
     model_config = {"extra": "forbid"}
@@ -100,12 +105,13 @@ class ComplexRatio(BaseModel):
 class MirroredAmp(BaseModel):
     model_config = {"extra": "forbid"}
     
-    start_iter: Optional[int] = Field(default=1, ge=1, description="Start iteration of applying mirrored amplitude constraint")
+    start_iter: Optional[int] = Field(default=None, ge=1, description="Start iteration of applying mirrored amplitude constraint")
     step: Optional[int] = Field(default=1, ge=1, description="Interval of iterations of applying mirrored amplitude constraint")
     end_iter: Optional[int] = Field(default=None, ge=1, description="End iteration of applying mirrored amplitude constraint")
     relax: float = Field(default=0.1, ge=0.0, le=1.0, description="Relaxation parameter for thresholding")
     scale: float = Field(default=0.03, ge=0.0, description="Scale parameter for amplitude constraint")
     power: float = Field(default=4.0, ge=0.0, description="Power parameter for amplitude constraint")
+
 
 class ObjZRecenter(BaseModel):
     model_config = {"extra": "forbid"}
@@ -117,15 +123,16 @@ class ObjZRecenter(BaseModel):
     scale: Optional[float] = Field(default=1, ge=0.0, le=1.0, description="Scale parameter for measured shift")
     max_shift: Optional[float] = Field(default=10, ge=0.0, description="Maximum value for applied shift")
 
+
 class ObjaThresh(BaseModel):
     model_config = {"extra": "forbid"}
     
-    start_iter: Optional[int] = Field(default=1, ge=1, description="Start iteration of applying object amplitude thresholding")
+    start_iter: Optional[int] = Field(default=None, ge=1, description="Start iteration of applying object amplitude thresholding")
     step: Optional[int] = Field(default=1, ge=1, description="Interval of iterations of applying object amplitude thresholding")
     end_iter: Optional[int] = Field(default=None, ge=1, description="End iteration of applying object amplitude thresholding")
     relax: float = Field(default=0.0, ge=0.0, le=1.0, description="Relaxation parameter for thresholding")
     thresh: List[float] = Field(
-        default=[0.98, 1.02],
+        default=[0.96, 1.04],
         min_items=2,
         max_items=2,
         description="Min and max thresholds for amplitude",)
@@ -134,18 +141,20 @@ class ObjaThresh(BaseModel):
 class ObjpPostiv(BaseModel):
     model_config = {"extra": "forbid"}
 
-    start_iter: Optional[int] = Field(default=1, ge=1, description="Start iteration of applying positivity constraint")
+    start_iter: Optional[int] = Field(default=None, ge=1, description="Start iteration of applying positivity constraint")
     step: Optional[int] = Field(default=1, ge=1, description="Interval of iterations of applying positivity constraint")
     end_iter: Optional[int] = Field(default=None, ge=1, description="End iteration of applying positivity constraint")
     relax: float = Field(default=0.0, ge=0.0, le=1.0, description="Relaxation parameter for positivity")
 
+
 class PosRecenter(BaseModel):
     model_config = {"extra": "forbid"}
 
-    start_iter: Optional[int] = Field(default=None, ge=1, description="Start iteration of applying position recentering constraint")
+    start_iter: Optional[int] = Field(default=1, ge=1, description="Start iteration of applying position recentering constraint")
     step: Optional[int] = Field(default=1, ge=1, description="Interval of iterations of applying position recentering constraint")
     end_iter: Optional[int] = Field(default=None, ge=1, description="End iteration of applying position recentering constraint")
     relax: float = Field(default=0.0, ge=0.0, le=1.0, description="Relaxation parameter for position recentering")
+
 
 class TiltSmooth(BaseModel):
     model_config = {"extra": "forbid"}
@@ -158,8 +167,6 @@ class TiltSmooth(BaseModel):
 
 class ConstraintParams(BaseModel):
     """
-    "constraint_params" determines the individual iter-wise constraints for the CombinedConstraint used for PtyRAD reconstruction
-
     Generally, these constraint functions are applied after each (or a couple) iteration(s) to stabilize the optimization trajectories
     When applied, the target tensor is passed through the constraint function, and the tensor get directly modified by the constraint function
     Set 'start_iter' to a positive integer to specify when do we want to apply such constraint, and setting 'start_iter' to 'null' would disable that constraint.
@@ -344,8 +351,22 @@ class ConstraintParams(BaseModel):
     """
     
 
+# Make explicit list so autodoc_pydantic can sort by this when go by `autodoc_pydantic_model_member_order = 'bysource'` in conf.py
 __all__ = [
-    name for name, obj in globals().items()
-    if getattr(obj, "__module__", None) == __name__
-    and hasattr(obj, "model_fields")  # pydantic
+    "ConstraintParams",
+    "OrthoPmode",
+    "ProbeMaskK",
+    "FixProbeInt",
+    "ObjRblur",
+    "ObjZblur",
+    "KrFilter",
+    "KzFilter",
+    "KrThresh",
+    "ComplexRatio",
+    "MirroredAmp",
+    "ObjZRecenter",
+    "ObjaThresh",
+    "ObjpPostiv",
+    "PosRecenter",
+    "TiltSmooth"
 ]

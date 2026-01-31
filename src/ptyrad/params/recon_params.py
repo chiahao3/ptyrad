@@ -1,3 +1,7 @@
+"""
+Defines available options and validation rules for the "recon_params" dictionary.
+"""
+
 from __future__ import annotations
 
 from typing import List, Literal, Optional, Union
@@ -63,9 +67,6 @@ class CompilerConfigs(BaseModel):
 
 class ReconParams(BaseModel):
     """
-    "recon_params" determines the overall reconstruction behavior including iterations, grouping/batching, 
-    and saving configurations for both reconstruction and hypertune modes
-    
     The PtyRAD results are organized into folder structures with 2 (reconstruction) or 3 (hypertune) levels not including the 'output/'. 
     The main (1st) output directory is specified by 'output_dir', this is usually separated by material systems or projects, 
     and presumably you'll have multiple reconstructions for this material system / project.
@@ -214,7 +215,7 @@ class ReconParams(BaseModel):
     
     prefix_time: Union[bool, str] = Field(default="date", description="Prefix time format for folder name")
     """
-    Set to true to prepend a date str like '20240903_' in front of the reconstruction folder name, 
+    Set to true to prepend a date str like '20240903_XXX' in front of the reconstruction folder name, 
     so that reconstruction with the same 'recon_dir_affixes' setting won't get incorrectly saved to the same output folder. 
     Available options are None, True, False, 'date', 'time', 'datetime', and time format string like '%Y%m%d_%H%M%S'. 
     Suggested value is 'date' for both 'reconstruction' and 'hypertune' modes. 
@@ -306,16 +307,24 @@ class ReconParams(BaseModel):
     This dict specifies the PyTorch JIT compiler configurations.
     Set to {'enable': true} to enable PyTorch JIT compilation for a 1.3-1.9x speedup on supported hardware.
     See https://docs.pytorch.org/docs/stable/generated/torch.compile.html for more details.
-    """
     
+    Generally, for torch.compile with Triton, you'll need CUDA GPU with Compute Capability >= 7.0.
+    Linux and macOS should support the PyTorch JIT compiler out-of-the-box.
+    For Windows users, please follow the instruction and download `triton-windows` from https://github.com/woct0rdho/triton-windows.
+    """
+    # Note that this validator allows users to explictly set `'compiler_configs': null` to reset to default behavior
+    # This makes it convenient to switch off without deleting or commenting out the line (especially when they don't know the switch is {'enable': False})
     @model_validator(mode="after")
     def fill_compiler_configs_defaults(self):
         if self.compiler_configs is None:
             self.compiler_configs = CompilerConfigs()
         return self
 
+# Make explicit list so autodoc_pydantic can sort by this when go by `autodoc_pydantic_model_member_order = 'bysource'` in conf.py
 __all__ = [
-    name for name, obj in globals().items()
-    if getattr(obj, "__module__", None) == __name__
-    and hasattr(obj, "model_fields")  # pydantic
+    "ReconParams",
+    "IndicesMode",
+    "BatchSize",
+    "ResultModes",
+    "CompilerConfigs",
 ]

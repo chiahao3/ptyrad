@@ -1,3 +1,7 @@
+"""
+Defines available options and validation rules for the "hypertune_params" dictionary.
+"""
+
 from __future__ import annotations
 
 import warnings
@@ -148,9 +152,9 @@ class TuneParams(BaseModel):
     Nlayer:     TuneParam = Field(default_factory=lambda: TuneParam(state=False, suggest="int",   kwargs={"low": 1, "high": 8, "step": 1}), description="Number of object layers")
     dz:         TuneParam = Field(default_factory=lambda: TuneParam(state=False, suggest="float", kwargs={"low": 4, "high": 8, "step": 0.5}), description="Slice thickness (Ang)")
     # Scan affine
-    scale:      TuneParam = Field(default_factory=lambda: TuneParam(state=True,  suggest="float", kwargs={"low": 0.8, "high": 1.2, "step": 0.02}), description="Scan affine step size scale")
+    scale:      TuneParam = Field(default_factory=lambda: TuneParam(state=False, suggest="float", kwargs={"low": 0.8, "high": 1.2, "step": 0.02}), description="Scan affine step size scale")
     asymmetry:  TuneParam = Field(default_factory=lambda: TuneParam(state=False, suggest="float", kwargs={"low": -0.2, "high": 0.2, "step": 0.05}), description="Scan affine asymmetry")
-    rotation:   TuneParam = Field(default_factory=lambda: TuneParam(state=True,  suggest="float", kwargs={"low": -4, "high": 4, "step": 0.5}), description="Scan affine rotation (degree)")
+    rotation:   TuneParam = Field(default_factory=lambda: TuneParam(state=False, suggest="float", kwargs={"low": -4, "high": 4, "step": 0.5}), description="Scan affine rotation (degree)")
     shear:      TuneParam = Field(default_factory=lambda: TuneParam(state=False, suggest="float", kwargs={"low": -4, "high": 4, "step": 0.5}), description="Scan affine shear (degree)")
     # Object tilts
     tilt_y:     TuneParam = Field(default_factory=lambda: TuneParam(state=False, suggest="float", kwargs={"low": -5, "high": 5, "step": 0.5}), description="Object tilt y (mrad)")
@@ -205,10 +209,9 @@ class TuneParams(BaseModel):
                 dumped_data.pop(k, None)
         return dumped_data
 
+
 class HypertuneParams(BaseModel):
     """
-    "hypertune_params" determines the behavior of hypertune (hyperparameter tuning) mode and the range of optimizable parameters
-
     Hypertune optimizable parameters are specified in 'tune_params', 
     these will override the corresponding values in 'exp_params' but follows the exact same definition and unit. 
     Set 'state' to true to enable hypertuning that parameter. 
@@ -306,8 +309,11 @@ class HypertuneParams(BaseModel):
     for the syntax to configure the search space ranges and types
     """
     
+# Make explicit list so autodoc_pydantic can sort by this when go by `autodoc_pydantic_model_member_order = 'bysource'` in conf.py
 __all__ = [
-    name for name, obj in globals().items()
-    if getattr(obj, "__module__", None) == __name__
-    and hasattr(obj, "model_fields")  # pydantic
+    "HypertuneParams",
+    "SamplerParams",
+    "PrunerParams",
+    "TuneParams",
+    "TuneParam"
 ]

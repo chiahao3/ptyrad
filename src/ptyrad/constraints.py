@@ -324,7 +324,9 @@ class CombinedConstraint(torch.nn.Module):
             vprint(f"Apply Gaussian blur with std = {tilt_smooth_std} scan positions on obj_tilts at iter {niter}", verbose=self.verbose)
     
     def forward(self, model, niter):
-        # Apply in-place constraints if niter satisfies the predetermined frequency
+        """
+        Applies constraints to the optimizable `model` parameters if `niter` satisfies the pre-determined conditions (start_iter, step, end_iter)
+        """
         # Note that the if check blocks are included in each apply methods so that it's cleaner, and I can print the info with niter
         
         with torch.no_grad():
