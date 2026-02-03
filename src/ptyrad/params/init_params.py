@@ -1,7 +1,7 @@
 """
-Defines available options and validation rules for the "init_params" dictionary.
+Defines available options and validation rules for the ``init_params`` dictionary.
 
-Note that init_params contains **dataset-dependent required fields**.
+Note that ``init_params`` contains **dataset-dependent required fields**.
 """
 
 from __future__ import annotations
@@ -17,18 +17,56 @@ from ptyrad.utils.aberrations import Aberrations
 
 class FilePathWithKey(BaseModel):
     path: pathlib.Path = Field(description="File path")
+    """
+    Absolute or relative path to the data file.
+    """
+
     key: Optional[str] = Field(default=None, description="key to the dataset")
+    """
+    Internal key path (e.g., for HDF5 or MAT files) to access the specific dataset.
+    """
+
     shape: Optional[List[int]] = Field(default=None, description="Shape of the dataset for loading from .raw")
+    """
+    Explicit shape of the dataset ``[N, height, width]``. Required when loading binary ``.raw`` files (e.g., EMPAD).
+    """
+
     offset: Optional[int] = Field(default=None, description="Offset of the dataset for loading from .raw")
+    """
+    **[bytes]** Number of bytes to skip at the beginning of the file. Used for raw binary loading.
+    """
+
     gap: Optional[int] = Field(default=None, description="Gap of the dataset for loading from .raw")
+    """
+    **[bytes]** Number of bytes to skip between each diffraction pattern. Used for raw binary loading.
+    """
 
 
 class MeasCalibration(BaseModel):
     model_config = {"extra": "forbid"}
     
     mode: Literal['dx', 'dk', 'kMax', 'da', 'angleMax', 'n_alpha', 'RBF', 'fitRBF'] = Field(default='fitRBF', description="Mode for measurements calibration")
+    """
+    Available options for calibration ``mode``, and corresponding units of their ``value`` :
+    
+    - ``dx`` : Ang
+    - ``dk`` : 1/Ang
+    - ``kMax`` : 1/Ang
+    - ``da`` : mrad
+    - ``angleMax`` : mrad
+    - ``n_alpha`` : unitless factor (kMax = n_alpha * conv_angle)
+    - ``RBF`` : px (radius of bright field disk in px)
+    - ``fitRBF`` : None (default)
+    
+    .. note::
+        real space pixel size and k-space pixel size are directly related via dx = 1/(2*kMax).
+    """
+    
     value: Optional[float] = Field(default=None, gt=0.0, description="Value for measurements calibration. Unit: Ang, Ang-1, mrad, # of alpha, px depends on modes")
-    """ Value is required for all mode except 'fitRBF """
+    """
+    Value used for specific calibration mode. All mode requires a ``value`` except for ``fitRBF``, 
+    as it fits the radius of bright field disk (RBF) in px, and calibrate it with user-provided ``conv_angle``.
+    """
 
     @model_validator(mode='before')
     def check_calibration_value(cls, values: dict) -> dict:
@@ -45,7 +83,18 @@ class ObjOmodeInitOccu(BaseModel):
     model_config = {"extra": "forbid"}
     
     occu_type: Literal['uniform', 'custom'] = Field(default='uniform', description="Mode for object mode occupancy initialization")
+    """
+    Available options are ``uniform`` (default) or ``custom``
+    
+    - ``uniform`` : Equally split the occupancy to each object mode, meaning each omode would have 1/omode occupancy.
+    - ``custom`` : Pass in the desired occupancy as an array to ``init_occu``. Note that length(arr) = omode, and sum(arr) = 1.
+    
+    """
+    
     init_occu: Optional[List[float]] = Field(description="Value for object mode occupancy initialization")
+    """
+    List of floats that are used to initialize the object mode occupancy if 'occu_type' = 'custom'.
+    """
     
     @model_validator(mode='before')
     def set_default_init_occu(cls, values: dict) -> dict:
@@ -59,26 +108,99 @@ class MeasPad(BaseModel):
     model_config = {"extra": "forbid"}
     
     mode: Optional[Literal['on_the_fly', 'precompute']] = Field(default='on_the_fly', description="Padding mode for measurements. Choose between 'on_the_fly' or 'precompute', or None.")
+    """
+    Available options are ``on_the_fly`` (default), ``precompute``, or null (will disable padding).
+
+    - ``precompute`` : Pad the measurements during initialization, and keep the padded array in memory.
+    - ``on_the_fly`` : Pad the measurements during optimization, so it's more efficient for memory. 
+    
+    ``on_the_fly`` padding doesn't really affect the reconstruction time, so it's suggested to always use ``on_the_fly`` to save the memory.
+    """
+    
     padding_type: Literal['constant', 'edge', 'linear_ramp', 'exp', 'power'] = Field(default='power', description="Padding type for measurements. Suggested type is 'power'.")
+    """
+    Available options are ``constant``, ``edge``, ``linear_ramp``, ``exp``, or ``power`` (default).
+    
+    - ``constant`` : Pad with constant value specified by ``value``
+    - ``edge`` : Pad with the edge value of the mean diffraction pattern amplitude
+    - ``linear_ramp`` : Pad with a linear ramp function to go from edge value to the specified ``value``
+    - ``exp``: Pad with a background fitted with exponential decay function ``a * np.exp(-b * r)``
+    - ``power``: Pad with a background fitted with a power law ``a * r**-b``
+
+    If choosing ``constant`` or ``linear_ramp``, you'll need to supply an addition field of ``value``.
+    If using ``exp`` or ``power``, the mean diffraction pattern amplitude is used to fit the functional coefficients. 
+        
+    ``power`` seems to fit the high angle scattering intensities the best, although padding with ``constant`` 0 is also a popular choice.
+    """
     target_Npix: int = Field(default=256, description="Target measurement number of pixels")
+    """
+    Final targeted diffraction pattern size, and it doesn't need to be power of 2.
+    """
+    
     value: Optional[float] = Field(default=0, description="Value used for padding background if mode='constant' or 'linear_ramp'.")
+    """
+    Amplitude value used for padding background if ``'mode'='constant'`` or ``'linear_ramp'``.
+    
+    Since ``meas_normalization`` is done before padding, so the supplied ``value`` must take the normalization into account.
+    """
+    
     threshold: Optional[float] = Field(default=70, description="Threshold value used for fitting background if mode='power' or 'exp'.")
+    """
+    Amplitude threshold percentile used for fitting background if ``'mode'='power'`` or ``'exp'``.
+    
+    This creates an "exclusion mask" by thresholding the diffraction pattern with values above such percentile threshold.
+    The exclusion mask is used to exclude the contribution from BF disk and strong Bragg disks, so we can fit the background more accurately.
+    Lower ``threshold`` value would exclude more values from diffraction pattern, hence less area is left for background fitting.
+    """
 
 
 class MeasResample(BaseModel):
     model_config = {"extra": "forbid"}
     
     mode: Optional[Literal['on_the_fly', 'precompute']] = Field(default='on_the_fly', description="Resampling mode for measurements. Choose between 'on_the_fly' or 'precompute', or None.")
-    scale_factors: List[float] = Field(default=[2, 2], min_items=2, max_items=2, description="Resampling scale factors (2,) for measurements")
+    """
+    Available options are ``on_the_fly`` (default), ``precompute``, or null (will disable resampling).
 
+    - ``precompute`` : Resample the measurements during initialization, and keep the padded array in memory. This is more efficient if you're "downsampling".
+    - ``on_the_fly`` : Resample the measurements during optimization, so it's more efficient for memory if you're "upsampling". 
+    """
+    
+    scale_factors: List[float] = Field(default=[2, 2], min_items=2, max_items=2, description="Resampling scale factors (2,) for measurements")
+    """
+    List of 2 floats as [ky_zoom, kx_zoom], currently only square detectors are supported, so ky_zoom must be the same as kx_zoom. 
+    """
 
 class MeasRemoveNegValues(BaseModel):
     model_config = {"extra": "forbid"}
 
     mode: Literal["subtract_min", "subtract_value", "clip_neg", "clip_value"] = Field(default="clip_neg", description="Mode to remove negative values in measurements")
-    value: Optional[float] = Field(default=None, description="Value used for removing negative values in measurements if mode='subtract_value' or 'clip_value'")
-    force: bool = Field(default=False, description="Boolean flag to force execute the operation no matter whether measurements contain negative values or not")
+    """
+    Available options are ``clip_neg`` (default), ``clip_value``, ``subtract_min``, ``subtract_value``. 
+    
+    - ``clip_neg`` : Clips the negative value (i.e., setting negative values to 0)
+    - ``clip_value`` : Clips the pixel intensity below specified ``value``
+    - ``subtract_min`` : Subtracts the entire dataset by ``dataset.min`` if ``dataset.min < 0``
+    - ``subtract_value`` : Subtracts the entire dataset by specified ``value``
 
+    If the dataset array still contains negative values for any reason, a ``clip_neg`` correction would be enforced again to guarantee no negative values.
+    
+    """
+    
+    value: Optional[float] = Field(default=None, description="Value used for removing negative values in measurements if mode='subtract_value' or 'clip_value'")
+    """
+    User-specified intensity value that is used for ``subtract_value`` and ``clip_value`` modes.
+    """
+
+    force: bool = Field(default=False, description="Boolean flag to force execute the operation no matter whether measurements contain negative values or not")
+    """
+    Boolean flag to force executing the ``MeasRemoveNegValues`` operation specified in ``mode``.
+    
+    By default, this non-negative correction is skipped if there's no negative values in measurements. 
+    
+    Use ``'meas_remove_neg_values': {'mode': 'subtract_value', 'value': 20, 'force': true}`` if you want to force subtract 20 from the entire dataset when there was no negative values.
+    """
+    
+    
     @model_validator(mode='before')
     def check_calibration_value(cls, values: dict) -> dict:
         mode = values.get('mode', 'clip_neg')
@@ -92,7 +214,21 @@ class MeasNormalization(BaseModel):
     model_config = {"extra": "forbid"}
     
     mode: Literal["max_at_one", "mean_at_one", "sum_to_one", "divide_const"] = Field(default="max_at_one", description="Mode to normalize measurements intensities")
+    """
+    Available options are ``max_at_one`` (default), ``mean_at_one``, ``sum_to_one``, and ``divide_const``.
+    
+    - ``max_at_one`` : Normalize the dataset such that the mean diffraction pattern intensity has a maximum value at 1
+    - ``mean_at_one`` : Normalize the dataset such that the mean diffraction pattern intensity has a mean value at 1
+    - ``sum_to_one`` : Normalize the dataset such that the mean diffraction pattern intensity sum to 1
+    - ``divide_const`` : Normalize the dataset by dividing with the specified ``value``
+    """
+
+    # For 'divide_const', you need to provide another dict entry 'value': <VALUE>.
+    
     value: Optional[float] = Field(default=None, description="Value used for normalizing measurements intensities if mode='divide_const'")
+    """
+    User-specified intensity value that is used for ``divide_const`` mode.
+    """
     
     @model_validator(mode='before')
     def check_normalization_value(cls, values: dict) -> dict:
@@ -107,24 +243,88 @@ class MeasAddPoissonNoise(BaseModel):
     model_config = {"extra": "forbid"}
     
     unit: Literal["total_e_per_pattern", "e_per_Ang2"] = Field(description="Unit of dose. Choose between 'total_e_per_pattern' or 'e-per_Ang2'.")
+    """
+    Available options are ``total_e_per_pattern``, ``e-PerAng2``.
+    
+    - ``total_e_per_pattern`` : Applies Poisson noise based on total electron per diffraction pattern
+    - ``e-PerAng2`` : Applies Poisson noise based on electron per Angstrom^2
+    
+    """
     value: Union[int, float] = Field(gt=0.0, description="Dose to be added to measurements")
+    """
+    User-specified dose value that is used for ``total_e_per_pattern`` or ``e-PerAng2`` modes.
+    """
 
 
 class MeasExport(BaseModel):
     model_config = {"extra": "forbid"}
 
     file_dir: Optional[str] = Field(default=None, description="Output directory for exported measurements")
+    """
+    Sets the output directory. 
+    
+    If ``{'file_dir': null}``, it will export to the same folder as ``meas_params['path']``.
+    """
+
     file_name: str = Field(default='ptyrad_init_meas', description="Output filename for exported measurements")
+    """
+    The output filenamefor the exported measurement array.
+    """
+    
     file_format: Literal["hdf5", "tif", "npy", "mat"] = Field(default='hdf5', description="File format for exported measurements")
+    """
+    Available options are ``hdf5``, ``tif``, ``npy``, and ``mat``.
+    
+    Note that the ``mat`` is actually HDF5, see https://docs.scipy.org/doc/scipy/reference/generated/scipy.io.savemat.html
+    """
     output_shape: Optional[List[int]] = Field(default=None, description="Output shape for exported measurements")
+    """
+    List of integers to reshape the output array like [Ny, Nx, Ky, Kx] or [N_scans, Ky, Kx].
+    
+    **Example:**
+
+    .. code-block:: yaml
+    
+        'meas_export': {'output_shape': [128, 128, 128, 128]}
+    
+    By default (if ``None``), the output layout is the PtyRAD internal convention (N_scans, Ky, Kx).
+    """
     append_shape: bool = Field(default=True, description="Whether to append the shape at the end of the exported file name")
+    """
+    If ``True``, it will append the shape of the array to the output file name (e.g., ``filename_100_100_128_128.h5``).
+    """
 
 
 class ProbeNormalization(BaseModel):
     model_config = {"extra": "forbid"}
     
     mode: Literal["mean_total_ints", "max_total_ints", "total_intensity"] = Field(default="mean_total_ints", description="Mode to normalize probe intensity")
+    """
+    Available options are ``mean_total_ints`` (default), ``max_total_ints``, and ``target_intensity``.
+
+    - ``mean_total_ints``: Normalizes based on the mean total intensities of measurements.
+
+      .. code-block:: python
+          
+        probe_int = np.mean(dataset.sum((1,2))) # Sum along (ky, kx)
+        
+    - ``max_total_ints``: Normalizes by the strongest diffraction pattern intensity (ideally the vacuum region).
+
+      .. code-block:: python
+    
+        probe_int = np.max(dataset.sum((1,2))) # Sum along (ky, kx)
+
+    - ``target_intensity``: Normalizes to a specific value provided in ``value``.
+
+      .. code-block:: python
+    
+        probe_int = target_intensity
+    """
+    
     value: Optional[float] = Field(default=None, description="Value used for normalizing probe intensity if mode='target_intensity'")
+    """
+    User-specified intensity value that is used for ``target_intensity`` mode.
+    """
     
     @model_validator(mode='before')
     def check_normalization_value(cls, values: dict) -> dict:
@@ -139,7 +339,27 @@ class ObjZPad(BaseModel):
     model_config = {"extra": "forbid"}
     
     pad_layers: List[Optional[int]] = Field(default=[0,0], min_length=2, max_length=2, description="Number of layers to pad on object's top and bottom surfaces. List of 2 ints.")
+    """
+    A list of 2 integers determining how many layers are appended to the top and bottom surfaces.
+    
+    **Example:**
+    
+    - ``[2, 2]``: Adds 2 layers on top and 2 layers on the bottom.
+    - ``[0, 5]``: Asymmetric padding (only pads 5 layers to the bottom).
+    """
+    
     pad_types: List[Literal['vacuum', 'mean', 'edge']] = Field(default=['vacuum', 'vacuum'], min_length=2, max_length=2, description="Type of layers to pad on object's top and bottom surfaces. List of 2 strings of 'vacuum', 'mean', 'edge")
+    """
+    A list of 2 strings specifying the content of the padded layers.
+    
+    Available options are ``vacuum``, ``mean``, ``edge``.
+    
+    Default is ``['vacuum', 'vacuum']``
+    
+    - ``vacuum``: Fills with empty (vacuum) space
+    - ``mean``: Fills with the mean layer of the object
+    - ``edge``: Repeats the edge layer values
+    """
     
     @field_validator("pad_layers")
     @classmethod
@@ -153,8 +373,22 @@ class ObjZResample(BaseModel):
     model_config = {"extra": "forbid"}
     
     mode: Literal['scale_Nlayer', 'scale_slice_thickness', 'target_Nlayer', 'target_slice_thickness'] = Field(description="Resampling mode for object depth. Available options are 'scale_Nlayer', 'scale_slice_thickness', 'target_Nlayer', 'target_slice_thickness'.")
-    value: Union[int, float] = Field(description="Corresponding values for the specified resampling mode for object depth.")
+    """
+    Available options:
+    
+    - ``scale_Nlayer`` : Scales the number of layers
+    - ``scale_slice_thickness`` : Scales the thickness of each slice
+    - ``target_Nlayer`` : Resamples to a specific total number of layers
+    - ``target_slice_thickness`` : Resamples to a specific slice thickness
+    """
 
+    value: Union[int, float] = Field(description="Corresponding values for the specified resampling mode for object depth.")
+    """
+    The numerical value for the operation.
+    
+    - Must be a **positive integer** for ``target_Nlayer``.
+    - Must be a **positive float** for all other modes.
+    """
     @model_validator(mode="after")
     def validate_value(cls, values):
         mode = values.mode
@@ -188,7 +422,19 @@ class TiltParams(BaseModel):
     model_config = {"extra": "forbid"}
     
     tilt_type: Literal['all', 'each'] = Field(default='all', description="Type of initial titls, can be either 'all' (1,2), or 'each' (N,2)")
+    """
+    Determines how the tilt array is initialized.
+
+    - ``all``: Creates a ``(1, 2)`` array. All positions share the same global tilt.
+    - ``each``: Creates a ``(N_scans, 2)`` array. Starts uniform but allows position-dependent optimization (if ``obj_tilts`` learning rate > 0).
+    """
+
     init_tilts: List[List[float]] = Field(default=[[0, 0]], description="Initial value for (N,2) object tilts")
+    """
+    **[mrad]** Initial tilt values ``[[tilt_y, tilt_x]]``.
+    
+    Default is ``[[0, 0]]``.
+    """
 
 
 SOURCE_PARAMS_MAPPING = {
@@ -258,15 +504,15 @@ def _validate_source_params_pair(
     
 class InitParams(BaseModel):
     """
-    The **init_params** can be roughly categorized into 4 parts:
+    The ``init_params`` can be roughly categorized into 4 parts:
     
     1. Experimental params (kv, convergence angle, aberrations)
     2. Model complexity (number of probe / object modes, number of object slices and slice thickness)
     3. Preprocessing (permutation, reshaping, flipping, cropping, padding, and normalization)
     4. Input source and params (where and how to load / initialize the diffraction pattern, probe, object)
     
-    Most of the fields in **init_params** are dataset-dependent, so users must manually check and input values.
-    While the preprocessing steps are not required fields, incorrect data orientation (`meas_flipT`) would lead to 
+    Most of the fields in ``init_params`` are **dataset-dependent**, so users must manually check and input values.
+    While the preprocessing steps are not required fields, incorrect data orientation (``meas_flipT``) would lead to 
     incorrect reconstructions, so it's practically required. 
     
     """
@@ -277,104 +523,169 @@ class InitParams(BaseModel):
     """
     Random seed is used to initialize the random number generator for improved reproducibility.
     
-    Seed can be specified here as `init_params.random_seed`, 
-    or be direcly passed in from CLI with `ptyrad run --params_path <PATH> --seed <SEED>
+    **Example:**
     
-    Note: This random seed is used for initialization and reconstruction.
-    For multiGPU, a fixed seed is automatically generated if not provided to ensure both GPUs started from the exact same object/probe/positions.
+    .. code-block:: yaml
+    
+        'random_seed': 42
+    
+    Or direcly passed in from CLI with:
+    
+    .. code-block:: bash
+    
+        ptyrad run --params_path <PATH> --seed 42
+        
+    .. note::
+        This random seed is used for both initialization and reconstruction.
+        For multiGPU, a fixed seed is automatically generated if not provided to ensure both GPUs started from the exact same object, probe, and positions.
     """
     
     # Experimental params
     probe_illum_type: Literal['electron', 'xray'] = Field(default="electron", description="Probe illumination type")
     """
-    Type of probe illumination, choose between 'electron' or 'xray'.
+    Type of probe illumination, choose between ``electron`` or ``xray``.
     
-    This affects the required field for probe generation as electron and x-ray ptychography use different parameters. 
+    **Example:**
+    
+    .. code-block:: yaml
+        
+        'probe_illum_type': 'electron' 
+    
+    This affects the required fields for probe generation, as electron and x-ray ptychography use different parameters.
+    
     """
     
     ## Electron probe params (used if probe_illum_type == 'electron')
     probe_kv: Optional[float] = Field(default=None, description="Electron acceleration voltage in kV") # Required for electron
     """ 
-    [kV] Acceleration voltage for relativistic electron wavelength calculation
+    **[kV]** Acceleration voltage for relativistic electron wavelength calculation
+
+    **Example:**
     
-    Required for `'probe_illum_type': 'electron'`
+    .. code-block:: yaml
+        
+        'probe_conv_angle': 24.9
+    
+    Required for ``'probe_illum_type': 'electron'``
+    
     """
     
     probe_conv_angle: Optional[float] = Field(default=None, gt=0.0, description="Semi-convergence angle in mrad") # Required for electron
     """ 
-    [mrad] Semi-convergence angle in mrad for probe-forming aperture 
+    **[mrad]** Semi-convergence angle in mrad for probe-forming aperture 
+
+    **Example:**
     
-    Required for `'probe_illum_type': 'electron'`
+    .. code-block:: yaml
+
+        'probe_conv_angle': 24.9
     
-    Note: This value should be experimentally calibrated as close as possible, 
-    as it could affect the real/k-space px size calibration if useing `'meas_calibration': {'mode': 'fitRBF'}`.
+    Required for ``'probe_illum_type': 'electron'``
+    
+    .. warning::
+        This value should be experimentally calibrated as close as possible, 
+        as it could affect the real and k-space px size calibration if useing ``'meas_calibration': {'mode': 'fitRBF'}``.
     """
 
     # The validation of dict entries are deferred to Aberrations class
     probe_aberrations: Dict[str, Any] = Field(default_factory=dict,
                                               description="Dictionary of aberration coefficients (Krivanek or Haider). e.g. {'defocus': -100, 'A1': 5, 'C21': 50}")
     """
-    [Ang, degree] Aberration coefficients for electron probe. 
-    
-    Supports Krivanek (polar and cartesian), Haider notations, or a mix of them. 
-    i.e., {'C10': 200, 'A1': 50, 'A1phi': 25, 'C21a': 300, 'C23': 400, 'phi23': 25, 'Cs': 5000}. 
-    Common aliases like `defocus` and `Cs` are also supported. 
+    **[Ang, degree]** Aberration coefficients for electron probe. 
 
-    Note: C10 = -df, and positive C10 refers to overfocus (stronger lens) following Kirkland/abtem convention.
-    See https://ptyrad.readthedocs.io/en/latest/_autosummary/ptyrad.utils.aberrations.html#module-ptyrad.utils.aberrations for more details.
+    **Example:** 
+
+    .. code-block:: yaml
+    
+        'probe_aberrations': {'C10': 200, 'A1': 50, 'A1phi': 25, 'C21a': 300, 'C23': 400, 'phi23': 25, 'Cs': 5000}
+
+    Supports Krivanek (polar and cartesian), Haider notations, common aliases, or a mix of them.
+    
+    Aberrations will be internally normalized to Krivanek polar while generating the probe.
+    
+    - Krivanek polar: ``C10``, ``C21``, ``phi21``, etc. 
+    
+        :math:`C_{nm} = \\sqrt{C_{nma}^2 + C_{nmb}^2}`
+        
+        :math:`\\phi_{nm} = \\arctan(\\frac{C_{nmb}}{C_{nma}}) / m`
+        
+    - Krivanek cartesian: ``C21a``, ``C21b``, etc.
+    
+        :math:`C_{nma} = C_{nm} * cos(m * \\phi_{nm})`
+        
+        :math:`C_{nmb} = C_{nm} * sin(m * \\phi_{nm})`
+        
+        :math:`C_{nm, complex} = C_{nma} + iC_{nmb}`
+            
+    - Haider notation: ``A1``, ``A1phi``, ``B2``, ``B2phi``, etc. Only supported up to A5 (equivalently C56).
+     
+    - Common aliases: ``defocus``, ``Cs`` are also supported. 
+
+    .. note::
+        **C10 = -df, and positive C10 refers to overfocus** (stronger lens) following Kirkland/abtem convention.
+        See https://ptyrad.readthedocs.io/en/latest/_autosummary/ptyrad.utils.aberrations.html#module-ptyrad.utils.aberrations for more details.
     """
     
     
     ## Xray probe params (used if probe_illum_type == 'xray')
     beam_kev: Optional[float] = Field(default=None, description="Xray beam energy in keV")
     """ 
-    [keV] X-ray beam energy for photon wavelength calculation
+    **[keV]** X-ray beam energy for photon wavelength calculation
     
-    Required for `'probe_illum_type': 'xray'`
+    Required for ``'probe_illum_type': 'xray'``
     """
 
     probe_dRn: Optional[float] = Field(default=None, description="Xray probe param: Width of outermost zone (in meters)")
     """ 
-    [meter] Width of the outermost zone for X-ray probes using Fresnel zone plates (FZP)
+    **[meter]** Width of the outermost zone for X-ray probes using Fresnel zone plates (FZP)
     
-    Required for `'probe_illum_type': 'xray'`
+    Required for ``'probe_illum_type': 'xray'``
     """
     
     probe_Rn: Optional[float] = Field(default=None, description="Xray probe param: Radius of outermost zone (in meters)")
     """ 
-    [meter] Radius of the outermost zone for X-ray probes using Fresnel zone plates (FZP)
+    **[meter]** Radius of the outermost zone for X-ray probes using Fresnel zone plates (FZP)
     
-    Required for `'probe_illum_type': 'xray'`
+    Required for ``'probe_illum_type': 'xray'``
     """    
 
     probe_D_H: Optional[float] = Field(default=None, description="Xray probe param: Diameter of the central beamstop (in meters)")
     """ 
-    [meter] Diameter of the central beamstop for X-ray probes using Fresnel zone plates (FZP)
+    **[meter]** Diameter of the central beamstop for X-ray probes using Fresnel zone plates (FZP)
     
-    Required for `'probe_illum_type': 'xray'`
+    Required for ``'probe_illum_type': 'xray'``
     """    
 
     probe_D_FZP: Optional[float] = Field(default=None, description="Xray probe param: Diameter of pinhole in meters")
     """ 
-    [meter] Diameter of pinhole for X-ray probes using Fresnel zone plates (FZP)
+    **[meter]** Diameter of pinhole for X-ray probes using Fresnel zone plates (FZP)
     
-    Required for `'probe_illum_type': 'xray'`
+    Required for ``'probe_illum_type': 'xray'``
     """    
 
     probe_Ls: Optional[float] = Field(default=None, description="Xray probe param: Distance (in meters) from the focal plane to the sample")
     """ 
-    [meter] Distance from the focal plane to the sample for X-ray probes using Fresnel zone plates (FZP)
+    **[meter]** Distance from the focal plane to the sample for X-ray probes using Fresnel zone plates (FZP)
     
-    Required for `'probe_illum_type': 'xray'`
+    Required for ``'probe_illum_type': 'xray'``
     """
     
     meas_Npix: int = Field(ge=1, description="Detector pixel number (square detector)") # Required
     """
-    Detector pixel number, EMPAD is 128. Only supports square detector (ky = kx) for simplicity.
+    Detector pixel number, EMPAD is 128. 
     
-    Note: This value always refer to the raw data pixel number, and is used to load and validate the raw data while loading.
-    If a user loaded a dataset with Npix=128, and later upsample it with `meas_resample` by a factor of 2,
-    PtyRAD will automatically update `meas_Npix` internally to 256. Same logic for other dimension-modifying preprocessing.  
+    Only supports square detector (ky = kx) for simplicity.
+    
+    **Example:**
+
+    .. code-block:: yaml
+        
+        'meas_Npix': 128
+    
+    .. note::
+        This value always refer to the raw data pixel number, and is used to load and validate the raw data while loading.
+        If a user loaded a dataset with Npix=128, and later upsample it with ``meas_resample`` by a factor of 2,
+        PtyRAD will automatically update ``meas_Npix`` internally to 256. Same logic for other dimension-modifying preprocessing.  
     """
     
     # Many features actually assume raster scan with fast/slow so we may always infer N_scans
@@ -383,70 +694,98 @@ class InitParams(BaseModel):
     pos_N_scans: int = Field(ge=1, description="Number of probe positions")
     """
     Number of probe positions (or equivalently diffraction patterns since 1 DP / position)
+
+    **Example:**
     
-    `pos_N_scans` is optional for raster scan, since it can be internally inferred from `pos_N_scan_slow * pos_N_scan_fast`.
-    However, `pos_N_scans` is required when using custom positions (`'pos_source': 'custom'`) like spiral or other scan patterns.
-    In those cases, `pos_N_scans` is required, 
-    while `pos_N_scan_slow` and `pos_N_scan_fast` would need to satisfy `pos_N_scan_slow * pos_N_scan_fast = pos_N_scans`
-    in order to pass the consistency test by the end of initialization.
+    .. code-block:: yaml
+    
+        'pos_N_scans': 16384
+    
+    .. note::
+        ``pos_N_scans`` is optional for raster scan, since it can be internally inferred from ``pos_N_scan_slow * pos_N_scan_fast``.
+        However, ``pos_N_scans`` is required when using custom positions (``'pos_source': 'custom'``) like spiral or other scan patterns.
+        In those cases, ``pos_N_scans`` is required, 
+        while ``pos_N_scan_slow`` and ``pos_N_scan_fast`` would need to satisfy ``pos_N_scan_slow * pos_N_scan_fast = pos_N_scans``
+        in order to pass the consistency test by the end of initialization.
     """
     
     pos_N_scan_slow: int = Field(ge=1, description="Number of scan positions along slow direction") # Required
     """
     Number of scan position along slow scan direction. Usually it's the vertical direction of acquisition GUI
     
-    Note: This value always refer to the raw data scan dimension, and is used to load and validate the raw data while loading.
-    If a user loaded a dataset with N_scan_slow=128, and later crop it with `meas_crop` to 64,
-    PtyRAD will automatically update `pos_N_scan_slow` internally to 64. Same logic for other dimension-modifying preprocessing.
+    **Example:**
     
-    For custom scan positions (`'pos_source': 'custom'`) that doesn't have so-called fast/slow scan directions, 
-    put in values such that `pos_N_scan_slow * pos_N_scan_fast = pos_N_scans` to pass the consistency test by the end of initialization.  
+    .. code-block:: yaml
+    
+        'pos_N_scan_slow': 128
+    
+    .. note::
+        This value always refer to the raw data scan dimension, and is used to load and validate the raw data while loading.
+        If a user loaded a dataset with ``N_scan_slow`` = 128, and later crop it with ``meas_crop`` to 64,
+        PtyRAD will automatically update ``pos_N_scan_slow`` internally to 64. Same logic for other dimension-modifying preprocessing.
+
+    .. note::
+        For custom scan positions (``'pos_source': 'custom'``) that doesn't have so-called fast/slow scan directions, 
+        put in values such that ``pos_N_scan_slow`` * ``pos_N_scan_fast`` = ``pos_N_scans`` to pass the consistency test by the end of initialization.  
     """
     
     pos_N_scan_fast: int = Field(ge=1, description="Number of scan positions along fast direction") # Required
     """
     Number of scan position along fast scan direction. Usually it's the horizontal direction of acquisition GUI
     
-    Note: This value always refer to the raw data scan dimension, and is used to load and validate the raw data while loading.
-    If a user loaded a dataset with N_scan_fast=128, and later crop it with `meas_crop` to 64,
-    PtyRAD will automatically update `pos_N_scan_fast` internally to 64. Same logic for other dimension-modifying preprocessing.
+    **Example:**
+
+    .. code-block:: yaml
     
-    For custom scan positions (`'pos_source': 'custom'`) that doesn't have so-called fast/slow scan directions, 
-    put in values such that `pos_N_scan_slow * pos_N_scan_fast = pos_N_scans` to pass the consistency test by the end of initialization.    
+        'pos_N_scan_fast': 128
+    
+    .. note::
+        This value always refer to the raw data scan dimension, and is used to load and validate the raw data while loading.
+        If a user loaded a dataset with ``N_scan_fast`` = 128, and later crop it with ``meas_crop`` to 64,
+        PtyRAD will automatically update `pos_N_scan_fast` internally to 64. Same logic for other dimension-modifying preprocessing.
+
+    .. note::
+        For custom scan positions (``'pos_source': 'custom'``) that doesn't have so-called fast/slow scan directions, 
+        put in values such that ``pos_N_scan_slow`` * ``pos_N_scan_fast`` = ``pos_N_scans`` to pass the consistency test by the end of initialization.    
     """
     
     pos_scan_step_size: float = Field(gt=0.0, description="Scan step size in Angstrom") # Required
     """
-    [Ang] Step size between probe positions in a rectangular raster scan pattern.
+    **[Ang]** Step size between probe positions in a rectangular raster scan pattern.
     
-    Note: This value should be experimentally calibrated as close as possible.
-    Incorrect scan step size is equivalent to a global scaling of the scan pattern.
-    Even a 2-5% error can take more than 30K iterations to properly converge, 
-    and larger error can cause significant gridding artifacts. 
+    **Example:**
+
+    .. code-block:: yaml
     
-    If possible, always acquire data when the stage is stable, 
-    or pre-calibrate a dataset-dependent scan step size to accelerate convergence of ptychographic reconstructions.
-    See tutorial notebook: https://github.com/chiahao3/ptyrad/tree/main/tutorials/get_affine_from_image.ipynb
+        'pos_scan_step_size': 0.415
+    
+    .. warning::
+        This value should be experimentally calibrated as close as possible.
+        Incorrect scan step size is equivalent to a global scaling of the scan pattern.
+        Even a 2-5% error can take more than 30K iterations to properly converge, 
+        and larger error can cause significant gridding artifacts. 
+        
+        If possible, always acquire data when the stage is stable, 
+        or pre-calibrate a dataset-dependent scan step size to accelerate convergence of ptychographic reconstructions.
+        See tutorial notebook: https://github.com/chiahao3/ptyrad/tree/main/tutorials/get_affine_from_image.ipynb
     """
     
     meas_calibration: MeasCalibration = Field(default_factory=MeasCalibration, description="Calibration mode and value")
     """
-    [Ang, 1/Ang, mrad, px] Calibration for the measurements (i.e., diffraction patterns).
-    
-    'mode' can be 'dx', 'dk', 'kMax', 'da', 'angleMax', 'n_alpha', 'RBF', and 'fitRBF'. 
-    All modes requires a scalar 'value' input except for 'fitRBF'.
-    
-    Units of 'value' for different modes:
-    - dx: Ang
-    - dk, kMax: 1/Ang
-    - da, angleMax: mrad
-    - n_alpha: unitless factor (kMax = n_alpha * conv_angle)
-    - RBF: px (radius of bright field disk in px)
-    - fitRBF: None
+    Calibration mode for the measurements (i.e., diffraction patterns) pixel size.
 
-    Note: Ptychography is very sensitive to microscope calibration, and mis-calibration can lead to slow, incorrect, or even failed reconstructions.
-    Factory or institutional calibration can often be 5-10% off (convergence angle, scan step size) and the accuracy is also often kV-dependent.
-    Users are strongly advised to perform proper microscope calibration to ensure accurate results.
+    **Example:**
+
+    .. code-block:: yaml
+
+        'meas_calibration': {'mode': 'fitRBF'}
+
+    See :class:`MeasCalibration` for more details.
+    
+    .. warning::
+        Ptychography is very sensitive to microscope calibration, and mis-calibration can lead to slow, incorrect, or even failed reconstructions.
+        Factory or institutional calibration can often be 5-10% off (convergence angle, scan step size) and the accuracy is also often kV-dependent.
+        Users are strongly advised to perform proper microscope calibration to ensure accurate results.
     """
 
     # Model complexity
@@ -454,385 +793,827 @@ class InitParams(BaseModel):
     """
     Maximum number of mixed probe modes. 
     
-    Set to pmode_max = 1 for single probe state, pmode_max > 1 for mixed-state probe during initialization.
+    **Example:**
+    
+    .. code-block:: yaml
+
+        'probe_pmode_max': 4
+    
+    Set to ``probe_pmode_max`` = 1 for single probe state, ``probe_pmode_max`` > 1 for mixed-state probe during initialization.
+    
     Typical values of suggested probe modes are 4 to 12, depends on the coherence of the probe. 
+    
     For simulated initial probe, it'll be generated with the specified number of probe modes. 
+    
     For loaded probe, the pmode dimension would be capped or padded to this number.
     
-    Note: The required reconstruction time often scale linearly with number of probe modes, along with a non-zero intercept.
+    .. note::
+        The required reconstruction time often scale linearly with number of probe modes, along with a non-zero intercept.
     """
     
     probe_pmode_init_pows: List[float] = Field(default=[0.02], description="Initial power weights for probe modes")
     """
-    list of 1 or a few (up to pmode_max) floats.
+    List of 1 or a few (up to pmode_max) floats.
     
     This specifies initial power(s) for each additional probe modes.
-     
-    If set at [0.02], all additional probe modes would contain 2% of the total intensity. 
-    sum(pmode_init_pows) must be 1 if more than len(pmode_init_pows) > 1. 
 
-    See 'ptyrad.utils.physics.make_mixed_probe' for more details
+    **Example:**
+    
+    .. code-block:: yaml
+    
+        'probe_pmode_init_pows': [0.02]
+         
+    If set at [0.02], all additional probe modes would contain 2% of the total intensity. 
+    
+    ``sum(pmode_init_pows)`` must be 1 if ``len(pmode_init_pows) > 1``. 
+
+    See ``ptyrad.utils.physics.make_mixed_probe`` for more details
     """
     
     obj_omode_max: int = Field(default=1, ge=1, description="Maximum number of mixed object modes")
     """
     Maximum number of mixed object modes.
+    
+    **Example:**
+
+    .. code-block:: yaml
+    
+        'obj_omode_max': 1
      
-    Set to omode_max = 1 for single object state, omode_max > 1 for mixed-state object during initialization. 
+    Set to ``obj_omode_max`` = 1 for single object state, ``obj_omode_max`` > 1 for mixed-state object during initialization. 
+    
     For simulated initial object, it'll be generated with the specified number of object modes. 
+    
     For loaded object, the omode dimension would be capped or padded to at this number.
     
-    Note: The required reconstruction time often scale linearly with number of object modes, along with a non-zero intercept.
+    .. note::
+        The required reconstruction time often scale linearly with number of object modes, along with a non-zero intercept.
     """
     
     obj_omode_init_occu: ObjOmodeInitOccu = Field(default_factory=ObjOmodeInitOccu, description="Occupancy type and value for mixed-object modes")
     """
     Occupancy type and value for mixed-object modes. 
     
-    Typically we do 'uniform' for frozen phonon like configurations as {'occu_type': 'uniform', 'init_occu': null}. 
-    'occu_type' can be either 'uniform' or 'custom', if 'custom', pass in the desired occupancy as an array to 'init_occu'
+    Typically we do 'uniform' for frozen phonon like configurations.
+    
+    **Example:**
+
+    .. code-block:: yaml
+    
+        'obj_omode_init_occu': {'occu_type': 'uniform', 'init_occu': null}
+
+    See :class:`ObjOmodeInitOccu` for more details.    
     """
     
     obj_Nlayer: int = Field(ge=1, description="Number of slices for multislice object")
     """
     Number of slices for multislice object.
+
+    **Example:**
+
+    .. code-block:: yaml
     
-    Set to obj_Nlayer = 1 for single slice object, obj_Nlayer > 1 for multislice object during initialization.
+        'obj_Nlayer': 1
+    
+    Set to ``obj_Nlayer`` = 1 for single slice object, ``obj_Nlayer`` > 1 for multislice object during initialization.
+    
     For quick params check, single slice ptychography can often give fair results for 10-15 nm thick specimens with light/medium atoms.
+    
     However, most electron microscopy specimens (except monolayer graphene) exhibit noticeable multiple scatterings,
+    
     so multislice ptychography is often helpful / required for improved reconstruction quality and quantitativeness.
-    Reconstruction with more than 40 slices can be computationally expensive and less stable.
         
-    Note: The required reconstruction time often scale linearly with number of layers, along with a non-zero intercept.
+    .. note::
+        The required reconstruction time often scale linearly with number of layers, along with a non-zero intercept.
+        Reconstruction with more than 40 slices can be computationally expensive and less stable.
     """
     
     obj_slice_thickness: float = Field(gt=0.0, description="Slice thickness in Angstrom")
     """
-    [Ang] Slice thickness (propagation distance) for multislice ptychography. 
+    **[Ang]** Slice thickness (propagation distance) for multislice ptychography. 
+    
+    **Example:**
+    
+    .. code-block:: yaml
+    
+        'obj_slice_thickness': 10
     
     Typical values are between 1 to 20 Ang, for most samples 10 Ang (1 nm) is a good starting point.
+    
+    Slice thickness has no effect for single-slice ptychography.
+    
+    .. note::
+        Comparing to conventional multislice formalism (slice thickness ~ 1 Ang), 
+        multislice electron ptychography (MEP) is making a wild approximation to trade for speed.
+        Although using 1-nm-thick slices seems to give qualitativly correct result with MEP,
+        it will not match with high-precision quantitative electron diffraction simulation with 1-Ang-slice.
     """
 
     # Preprocessing
     meas_permute: Optional[List[int]] = Field(default=None, description="Permutation for diffraction patterns")
     """
-    type: null or list of ints.
+    Applies additional permutation (reorder axes) to the loaded diffraction patterns with a list of ints. 
+
+    The syntax is the same as ``np.transpose()``.
     
-    This applies additional permutation (reorder axes) to the loaded diffraction patterns. 
-    The syntax is the same as np.transpose().
+    **Example:**
+
+    .. code-block:: yaml
     
-    This is commonly needed if the original dataset is arranged as (ky, kx, Ry, Rx), where Ry and Rx are real-space scan dimensions.
-    For such cases, use `'meas_permute': [2,3,0,1]` to convert the dataset into (Ry, Rx, ky, kx) first, 
-    and then use `meas_reshape` to make it into (N_scans, ky, kx).
+        'meas_permute': [2, 3, 0, 1]
+
+    .. note::
+        This is offen needed if the original dataset is arranged as (ky, kx, Ry, Rx), where Ry and Rx are real-space scan dimensions.
+        For such cases, use ``'meas_permute': [2, 3, 0, 1]`` to convert the dataset into (Ry, Rx, ky, kx) first, 
+        and then use ``meas_reshape`` to make it into (N_scans, ky, kx).
     """
 
     meas_reshape: Optional[List[int]] = Field(default=None, min_items=3, max_items=3, description="Reshape for diffraction patterns")
     """
-    type: null or list of 3 ints. 
+    Applies additional reshaping (rearrange elements) to the loaded diffraction patterns with a list of 3 ints. 
     
-    This applies additional reshaping (rearrange elements) to the loaded diffraction patterns. 
-    The syntax is the same as np.reshape().
+    The syntax is the same as ``np.reshape()``.
+    
+    **Example:**
+
+    .. code-block:: yaml
+    
+        'meas_reshape': [-1, 128, 128]
      
-    This is commonly needed to convert the 4D diffraction dataset (Ry,Rx,ky,kx) into 3D (N_scans,ky,kx)
-    We can put `'meas_reshape': [-1, <Npix>, <Npix>]` for convenient representation, make sure to replace <Npix> with your actual value in params files.
+    .. note::
+        This is often needed to convert the 4D diffraction dataset (Ry,Rx,ky,kx) into 3D (N_scans,ky,kx).
+        We can put ``'meas_reshape': [-1, <Npix>, <Npix>]`` for convenient representation, make sure to replace <Npix> with your actual value in params files.
     """
 
     meas_flipT: Optional[List[int]] = Field(default=None, min_items=3, max_items=3, description="Flip and transpose for diffraction patterns")
     """
-    type: null or list of 3 binary booleans (0 or 1)
+    Applies additional flipping and transposing to the loaded diffraction patterns with a list of 3 binary booleans (0 or 1)
     
-    This applies additional flipping and transposing to the loaded diffraction patterns.
+    The operation syntax is [flipud, fliplr, transpose], which is the same as PtychoShleves / fold_slice.
+     
+    **Example:**
+
+    .. code-block:: yaml
     
-    The operation syntax is [flipud, fliplr, transpose], which is the same as PtychoShleves / fold_slice. 
+        'meas_flipT': [1,0,0] 
     
-    Note: Although the programmic default is null or equivalently [0,0,0], practically we often need to find the correct dataset orientation from each microscope. 
-    Despite `pos_scan_flipT` can also be used to compensate relative (scan/DP) orientation,
-    it's strongly suggested to use `meas_flipT` to correct for the dataset orientation, and keep `pos_scan_flipT` as null.
-    Because `pos_scan_flipT` would alter the visual layout of "fast/slow" directions, and can cause discrepancy with other simultaneously acquired datasets (like ADF-STEM). 
-    Therefore, `meas_flipT` is the recommended approach, and is the only orientaiton-related value that can be optionally attached to output reconstruction folder name.
+    [1,0,0] means to flip diffraction patterns vertically.
+    
+    .. note::
+        Although the programmic default is null or equivalently [0,0,0], practically we often need to find the correct dataset orientation for each microscope. 
+
+    .. note::
+        Despite ``pos_scan_flipT`` can also be used to compensate relative orientation between scan coordinates and diffraction patterns,
+        it's strongly suggested to use ``meas_flipT`` to correct for the dataset orientation, and keep ``pos_scan_flipT`` as null.
+        Because ``pos_scan_flipT`` would alter the visual layout of "fast/slow" directions, and can cause discrepancy with other simultaneously acquired datasets (like ADF-STEM). 
+        Therefore, ``meas_flipT`` is the recommended approach, and is the only orientaiton-related value that can be optionally attached to output reconstruction folder name.
     """
     
     meas_crop: Optional[List[Optional[List[int]]]] = Field(default=None, description="Crop for 4D diffraction patterns")
     """
-    type: null or (4,2) nested list of ints as [[scan_slow_start, scan_slow_end], [scan_fast_start, scan_fast_end], [ky_start, ky_end], [kx_start, kx_end]]. 
+    Applies additional cropping to the 4D dataset in both real and k-space with a (4,2) nested list of ints as: 
     
-    This applies additional cropping to the 4D dataset in both real and k-space. 
+    ``[[scan_slow_start, scan_slow_end], [scan_fast_start, scan_fast_end], [ky_start, ky_end], [kx_start, kx_end]]``. 
+    
+    **Example:**
+    
+    .. code-block:: yaml
+
+        'meas_crop': [[0, 64], [0, 64], null, null]
         
-    If you want to keep some of the dimensions, for example, do [[0,64],[0,64], null, null] to crop in real space but leaves the k-space untouched. 
-    This is useful for reconstrucing a subset of real-space probe positions, or to crop the kMax of diffraction patterns. 
-    The syntax follows conventional numpy indexing so the upper bound is not included.
+    ``[[0,64], [0,64], null, null]`` means cropping scan positions to 64 x 64 in real space, but leaves the k-space untouched. 
+
+    This is useful for reconstrucing only a subset of real-space probe positions, or to crop the kMax of diffraction patterns. 
+
+    The slicing syntax follows conventional numpy indexing so the upper bound is not included.
     
-    Note: This does NOT affect the file on disk, and is only operating on the loaded array. 
-    This feature allows flexible change of reconstruction FOV (if cropping in real space) without processing and saving multiple versions of the same dataset.
-    If cropping in k-space, it will modify kMax and hence the real space pixel size, which can be useful if one want a faster reconstruction (due to smaller Npix).
-    There is no need to modify `meas_Npix`, `pos_N_scans`, `pos_N_fast_scan`, `pos_N_slow_scan` with this feature, as the value will be automatically updated internally.
+    .. note::
+        **This does NOT affect the file on disk, and is only operating on the loaded array.** 
+        This feature allows flexible change of reconstruction FOV (if cropping in real space) without processing and saving multiple versions of the same dataset.
+        If cropping in k-space, it will modify kMax and hence the real space pixel size, which can be useful if one want a faster reconstruction (due to smaller Npix).
+        There is no need to modify ``meas_Npix``, ``pos_N_scans``, ``pos_N_fast_scan``, or ``pos_N_slow_scan`` with this feature, as the value will be automatically updated internally.
     """
 
     meas_pad: Optional[MeasPad] = Field(default=None, description="Padding configuration for CBED")
     """
-    type: dict. 
+    Applies additional padding to the diffraction pattern to side length = ``'target_Npix'`` based on the ``padding_type``. 
     
-    'mode' can be 'on_the_fly', 'precompute', or null (will disable padding). 
-    'padding_type' can be 'constant', 'edge', 'linear_ramp', 'exp', or 'power'. 
-    This will pad the CBED to side length = 'target_Npix' based on the padding_type. 
-    If using 'exp' or 'power', the mean diffraction pattern amplitude is used to fit the functional coefficients. 
-    'precompute' will pad the measurements during initialization, while 'on_the_fly' will only pad the measurements during optimization, 
-    so it's more efficient for GPU memory. 
-    'on_the_fly' padding doesn't really affect the reconstruction time so it's suggested to always use 'on_the_fly' if you're padding to save the GPU memory.
+    **Example:**
+    
+    .. code-block:: yaml
+    
+        'meas_pad': {'mode': 'on_the_fly', 'padding_type': 'power', 'target_Npix': 256, 'value': null, 'threshold': 70}
+    
+    There are 5 configurational fields, see :class:`MeasPad` for more details.
+
+    .. note::
+        Padding the diffraction pattern will increase kMax, and hence reducing the real space pixel size (dx). 
+        While the nominal kMax increases, it doesn't necessarily enhance the ultimate spatial resolution as there's no actual information about the specimen being added.
     """
     
     meas_resample: Optional[MeasResample] = Field(default=None, description="Resampling configuration for diffraction patterns")
     """
-    'mode' can be 'on_the_fly', 'precompute', or null. 
-    'scale_factor' takes a list of 2 floats as [ky_zoom, kx_zoom] that must be the same. 
-    This applies additional resampling of initialized diffraction patterns along ky and kx directions. 
-    This is useful for changing the k-space sampling of diffraction patterns. 
-    See scipy.ndimage.zoom for more details. 
-    'precompute' will resample the measurements during initialization, while 'on_the_fly' will only resample the measurements during optimization, 
-    so it's more efficient for GPU memory if you're upsampling (i.e., scale_factor > 1). 
-    For downsampling, it's much better to do 'precompute' to save GPU memory. 
-    'on_the_fly' resampling doesn't really affect the reconstruction time so it's suggested to always use 'on_the_fly' if you're upsampling.
+    Applies additional resampling to the diffraction patterns by ``'scale_factors'`` along ky and kx directions. 
+
+    **Example:**
+ 
+    .. code-block:: yaml
+    
+        'meas_resample': {'mode': 'on_the_fly', 'scale_factors': [2,2]}
+    
+    See :class:`MeasResample` for more details.
+    
+    .. note::
+        Resampling the diffraction pattern does NOT change kMax (or dx), but it will modify the FOV of the probe array.
+        Common usage of resampling is to upsample the diffraction pattern, so that the probe array can have more extended FOV to accomodate the probe.
+        For very large probe size, or thick samples with large convergence angle, this is often needed to reduce edge artifacts of the probe.
     """
     
     meas_add_source_size: Optional[float] = Field(default=None, gt=0.0, description="Gaussian blur std for spatial partial coherence in Angstrom")
     """
-    type: null or float, unit: Ang. 
-    This adds additional spatial partial coherence to diffraction patterns by applying Gaussian blur along scan directions. 
-    The provided value is used as the std (sigma) for the Gaussian blurring kernel in real space. 
-    Note that FWHM ~ 2.355 std, so a std of 0.34 Ang is equivalent to a source size (FWHM) of 0.8 Ang
+    **[Ang]** Adds additional spatial partial coherence to diffraction patterns by applying Gaussian blur along scan directions.
+    
+    **Example:**
+
+    .. code-block:: yaml
+    
+        'meas_add_source_size': 0.34
+     
+    The provided value is used as the std (sigma) of the Gaussian blurring kernel in real space (i.e., it's mixing nearby diffraction patterns).
+    
+    This is useful for making simulated datasets more realisitc in a flexible manner, without creating unnecessary copies. 
+    
+    .. note:: 
+        Since FWHM ~ 2.355 std, so a std of 0.34 Ang is equivalent to a source size (FWHM) of 0.8 Ang
     """
 
     meas_add_detector_blur: Optional[float] = Field(default=None, gt=0.0, description="Gaussian blur std for detector in pixels")
     """
-    type: null or float, unit: px (k-space). 
-    This adds additional detector blur to diffraction patterns to emulate the PSF on detector. 
+    **[k-space px]** Adds additional detector blur to diffraction patterns to emulate the PSF on detector.
+    
     The provided value is used as the std (sigma) for the Gaussian blurring kernel in k-space. 
-    Note that this is applied to the "measured", or "ground truth" diffraction pattern and is different from 'model_params['detector_blur_std']'
-    that applies to the forward simulated diffraction pattern
+    
+    **Example:**
+
+    .. code-block:: yaml
+    
+        'meas_add_detector_blur': 1
+        
+    This is useful for making simulated datasets more realisitc in a flexible manner, without creating unnecessary copies. 
+    
+    .. note::
+        This is applied to the "measured", or "reference" diffraction pattern, so is different from ``model_params['detector_blur_std']``
+        that applies blurring to the forward simulated diffraction pattern.
     """
     
     meas_remove_neg_values: MeasRemoveNegValues = Field(default_factory=MeasRemoveNegValues, description="Preprocessing for negative values in measurements")
     """
-    Choose the preprocessing method for handling negative values in the measurements. 
-    Available options are 'subtract_min', 'subtract_value', 'clip_neg', and 'clip_value'. 
-    Previously (before beta3.1) the PtyRAD default is 'subtract_min', while for low dose data is recommended to use 'clip_neg' or 'clip_value' 
-    i.e. {'mode': 'clip_neg', 'value': 20}. Current default is 'clip_neg'. 
-    'value' is only needed for 'subtract_value' and 'clip_value'. 
-    This correction is skipped if there's no negative values in measurements unless 'force'=True. 
-    If you want to enforce some offsetting when there's no negative values, set 'force': true to enforce the correction.
+    Removes negative values or in the measurements (i.e, diffraction patterns).
+    
+    The measurements array must contain only positive values, so this correction is enforced with a default value of ``clip_neg``.
+
+    This can also be used to clip low intensity noises, or to offset the entire baseline by specified values.
+    
+    **Example:**
+
+    .. code-block:: yaml
+    
+        'meas_remove_neg_values': {'mode': 'clip_neg'}
+
+    See :class:`MeasRemoveNegValues` for more details.
+        
+    .. note::
+        For low dose data set with many 0-electron events, it is recommended to use ``clip_value`` to clip the 0-electron peak so the background is truly 0.
+        For example, if the 0-electron peak is around 20 counts, then use ``'meas_remove_neg_values': {'mode': 'clip_value', 'value': 20}`` to clip those values,
+        otherwise the probe will absorb the background intensity, which may degrade or even fail the reconstruction.
     """
     
     meas_normalization: MeasNormalization = Field(default_factory=MeasNormalization, description="Normalization method for measurements")
     """
-    type: null or dict. 
-    Choose the normalization method for measurements. 
-    Available options are 'max_at_one' (default), 'mean_at_one', 'sum_to_one', and 'divide_const'. 
-    For 'divide_const', you need to provide another dict entry 'value': <VALUE>.
+    Normalization methods of the measurements array.
+
+    **Example:**
+    
+    .. code-block:: yaml
+    
+        'meas_normalization': {'mode': 'max_at_one'}
+
+    See :class:`MeasNormalization` for more details.
+
+    .. note::
+        Many optimizers are scale dependent and generally works better for values around 1. 
+        This normalization keeps the diffraction pattern in a comfortable range for the AD optimizers, 
+        and ensures the edge intensities are low enough so that we don't suffer from significant wrap-around FFT artifacts.
+
     """
     
     meas_add_poisson_noise: Optional[MeasAddPoissonNoise] = Field(default=None, description="Poisson noise configuration")
     """
-    type: null or dict, 
-    i.e., {'unit': 'total_e_per_pattern', 'value': 10000} or {'unit': 'e_per_Ang2', 'value': 10000}. 
-    This applies additional Poisson noise to diffraction patterns to emulate the Poisson statistics of electron dose based on the given unit, value, and scan step size. 
-    This is useful when you have a noise-free simulated dataset and want to try ptychographic reconstruciton at different dose conditions
+    Applies additional Poisson noise to diffraction patterns to emulate electron dose Poisson statistics.
+
+    **Example:**
+
+    .. code-block:: yaml
+
+        'meas_add_poisson_noise': {'unit': 'e_per_Ang2', 'value': 10000}
+
+
+    This is useful for making simulated datasets more realisitc in a flexible manner, without creating unnecessary copies. 
+    
+    See :class:`MeasAddPoissonNoise` for details.
+    
+    .. note::
+        You can use this to simulate ptychographic reconstruction with different dose conditions using a single noise-free dataset.
     """
     
     meas_export: Optional[Union[bool, MeasExport]] = Field(default=None, description="Export configuration for measurements")
     """
-    type: null, boolean, or dict, 
-    i.e., {'file_dir': null, 'file_name': 'ptyrad_init_meas', 'file_format': 'hdf5', 'output_shape': null, 'append_shape': true}. 
-    Set this to True or a dict to enable exporting the final initialized measurements array to disk for further processing, analysis, or visualization. 
-    The exported data layout has the same Python convention with py4DGUI so there's no need to worry about orientation mismatch. 
-    This can be used to interactively check whether the meas_flipT is correct. 
+    Exports the final initialized measurements array to disk for further processing, analysis, or visualization.
+
+    **Example:**
+
+    .. code-block:: yaml
+
+        'meas_export': {'file_name': 'ptyrad_init_meas', 'file_format': 'hdf5', 'append_shape': True}
+
+
+    .. code-block:: yaml
+    
+        'meas_export': true # or null to simply disable
+
+    The exported data layout has the same Python convention with py4DGUI so there's no need to worry about orientation mismatch.
+
     By default the output layout is (N_scans, Ky, Kx), and dropping it to py4DGUI then reshape it into (Ny, Nx, Ky, Kx) keeps the correct orientation. 
-    'file_dir' sets the output directory, if None, it'll export to the same folder as 'meas_params['path']'. 
-    'file_format' supports 'hdf5', 'tif', 'npy', and 'mat'. 
-    'output_shape' takes a list of integers like [Ny, Nx, Ky, Kx] or [N_scans, Ky, Kx]. 
-    'append_shape' is a boolean, if True, it'll append the shape of the array to the output file name.
+
+    See :class:`MeasExport` for details.
+
+    .. note::
+        This can be used to interactively check whether the ``meas_flipT`` is correct.
     """
 
     probe_permute: Optional[List[int]] = Field(default=None, description="Permutation for probe")
     """
-    type: null or list of int. 
-    This applies additional permutation (reorder axes) for the initialized probe. 
-    The syntax is the same as np.transpose()
+    Applies additional permutation (reorder axes) to the loaded probe array with a list of ints. 
+
+    The syntax is the same as ``np.transpose()``.
+    
+    **Example:**
+
+    .. code-block:: yaml
+    
+        'probe_permute': [1, 2, 0]
+
+    .. note::
+        This can be used to permute custom probe array. For common `probe_source`` like ``PtyShv``, 
+        the permutation is done internally during initialization so this ``probe_permute`` is not needed.
     """
 
     probe_z_shift: Optional[float] = Field(default=None, description="Axially (z) shift the initialized probe")
     """
-    type: null or float. 
+    **[Ang]** Axially shifts the loaded probe along the depth (z) dimension.
+
+    **Example:**
+
+    .. code-block:: yaml
+
+        'probe_z_shift': -50.0
+
+    The sign convention follows the propagation direction (PtyRAD progrates from top to bottom):
     
-    unit: Ang for electron and m for x-ray. 
-    This shifts the initialized probe axially along the depth (z) dimension. 
-    The sign convention follows the propagation direction, 
-    so positive value means to propagate the probe further into the object (i.e., forward direction), 
-    and negative value refers to rewind the probe backward. 
-    This is used to shift the probe focus vertically along the object depth dimension in accordance with the object z-recentering (i.e., obj_z_crop, obj_z_pad). 
-    For example, if you pad the reconstructed object with additional 50 Ang vacuum layer ON TOP via 'obj_z_pad', 
-    you'll want to apply a 'probe_z_shift: -50' Ang to the originally reconstructed probe so the relative geometry of probe and object is conserved. 
+    - **Positive (+)**: Propagates the probe forward (further into the object).
+    - **Negative (-)**: Rewinds the probe backward.
+
+    .. note::
+        This is typically used to conserve the relative geometry between the probe and object when the object is re-centered (e.g., via ``obj_z_pad``, ``obj_z_crop``). 
+        
+        For example, if you pad the object with a 50 Ang vacuum layer ON TOP via ``obj_z_pad``, 
+        you should apply a ``-50`` shift to the reconstructed probe to maintain relative geometry of probe and object.
     """
     
     probe_normalization: ProbeNormalization = Field(default_factory=ProbeNormalization, description="Normalization method for probe intensity")
     """
-    type: null or dict. 
-    Choose the normalization method for probe intensity. 
-    i.e., {'mode': 'mean_total_ints'}, or {'mode': 'target_intensity', 'value': 1}. 
-    Available options for 'mode' are 'mean_total_ints' (default), 'max_total_ints', and 'target_intensity'. 
-    For 'target_intensity', you need to provide another dict entry 'value': <VALUE>. 
-    Note that probe intensity should be close to the measurement intensity to make object amplitude ~ 1. 
-    For thick sample with short collection angles, significant amount of electrons are scattered outside of the detector, 
-    use 'max_total_ints' to normalize the probe intensity by the strongest diffraction pattern (ideally vacuum region) for more accurate reconstruction.
+    Normalization methods for probe intensity.
+
+    **Example:**
+
+    .. code-block:: yaml
+
+        'probe_normalization': {'mode': 'mean_total_ints'}
+
+    See :class:`ProbeNormalization` for more details.
+
+    .. note::
+        Ideally, the probe intensity should match the measurement intensity to ensure the reconstructed object amplitude stays close to 1.
+
+    However, for thicker sample with shorter collection angles, 
+    
+    significant amount of electrons are scattered outside of the detector so probe_int > DP_int.
+    
+    For such cases, use
+
+    .. code-block:: yaml
+
+        'probe_normalization': {'mode': 'max_total_ints'}
+
+    to normalize the probe intensity by the strongest diffraction pattern (ideally vacuum region) for more accurate reconstruction.
+
     """
+
     pos_scan_flipT: Optional[List[int]] = Field(default=None, description="Flip and transpose for scan patterns")
     """
-    type: null or list of 3 binary booleans (0 or 1) as [flipup, fliplr, transpose] just like PtychoShleves. 
-    Default value is null or equivalently [0,0,0]. 
-    This applies additional flip and transpose to initialized scan patterns. 
-    Note that modifying 'scan_flipT' would change the image orientation, so it's recommended to set this to null, and only use 'meas_flipT' to get the orientation correct
+    Applies additional flipping and transposing to the scan pattern with a list of 3 binary booleans (0 or 1)
+    
+    The operation syntax is [flipud, fliplr, transpose], which is the same as PtychoShleves / fold_slice.
+     
+    **Example:**
+
+    .. code-block:: yaml
+    
+        'pos_scan_flipT': [1,0,0] 
+    
+    [1,0,0] means to flip the scan pattern vertically.
+ 
+    .. note::
+        Modifying ``pos_scan_flipT`` would change the image orientation, 
+        so it's recommended to set this to null, and only use ``meas_flipT`` to get the orientation correct.
     """
 
     pos_scan_affine: Optional[List[float]] = Field(default=None, description="Affine transformation for scan patterns")
     """
-    type: null or list of 4 floats as [scale, asymmetry, rotation, shear] just like PtychoShleves. 
-    Default is null or equivalently [1,0,0,0], rotation and shear are in unit of degree. 
-    This applies additional affine transformation to initialized scan patterns to correct sample drift and imperfect scan coils
+    Applies an additional affine transformation to the initialized scan patterns to correct for sample drift or imperfect scan coils.
+
+    **Example:**
+
+    .. code-block:: yaml
+
+        'pos_scan_affine': [1.0, 0.0, 2.0, 0.5]
+
+    The list must contain 4 floats in the order: ``[scale, asymmetry, rotation, shear]``.
+
+    - **scale**: Global scaling factor
+    - **asymmetry**: Aspect ratio distortion
+    - **rotation**: **[deg]** Rotation angle
+    - **shear**: **[deg]** Shear angle
+
+    See tutorial notebook: https://github.com/chiahao3/ptyrad/tree/main/tutorials/get_affine_from_image.ipynb
+    
+    .. note::
+        Default is ``None`` (equivalent to ``[1, 0, 0, 0]``). This format matches the convention used in PtychoShelves.
     """
     
     pos_scan_rand_std: Optional[float] = Field(default=0.15, ge=0.0, description="Random displacement std for scan positions in pixels")
     """
-    type: null or float, unit: px (real space). 
-    Randomize the initial guess of scan positions with Gaussian distributed displacement (std in px) to reduce raster grid pathology
+    **[real space px]** Standard deviation of Gaussian distributed random displacements applied to the initial scan positions.
+
+    **Example:**
+
+    .. code-block:: yaml
+
+        'pos_scan_rand_std': 0.15
+
+    Randomizing the initial guess helps reduce raster grid pathology during reconstruction.
     """
 
     obj_z_crop: Optional[List[int]] = Field(default=None, description="Cropping object along depth dimension")
     """
-    type: null or list of 2 ints as [z_start, z_end]. 
-    This applies additional cropping to the 4D object (omode, Nz, Ny, Nx) along depth dimension and removes the unselected layers. 
-    This is useful for removing the unwanted vacuum layers above and below the specimen. 
-    The syntax follows conventional numpy indexing so the upper bound is not included.
+    Applies additional cropping to the 4D object (omode, Nz, Ny, Nx) along the depth dimension to remove unselected layers (e.g., vacuum padding).
+
+    **Example:**
+
+    .. code-block:: yaml
+
+        # Keep layers from index 5 to 25
+        'obj_z_crop': [5, 25]
+
+    Takes a list of 2 integers: ``[z_start, z_end]``.
+
+    .. note::
+        The syntax follows conventional numpy indexing, so the upper bound (``z_end``) is **not included**.
+        This can be combined with ``obj_z_pad``, ``obj_z_resample`` for flexible multislice object initialization.
     """
     
     obj_z_pad: Optional[ObjZPad] = Field(default=None, description="Padding object along depth dimension")
     """
-    type: null or dict, i.e., {'pad_layers': [2,2], 'pad_types': ['vacuum', 'vacuum']}. 
-    This applies additional padding to the 4D object (omode, Nz, Ny, Nx) along depth dimension (Nz) and expands the object thickness. 
-    'pad_layers' is a list of 2 ints that determines how many layers are appended to the top and bottom surfaces. 
-    [2,2] means 2 layers on top and 2 layers on the bottom. 
-    Set the value to 0 or None to achieve asymmetric padding on one of the surface. 
-    For example 'pad_layers': [0,5] means to only pad 5 layers to the bottom. 
-    'pad_types' is a list of 2 strings that specifies whether we are padding vacuum layers, mean layers, or edge layers. 
-    The available options are 'vacuum', 'mean', and 'edge'. 
+    Applies additional padding to the 4D object ``(omode, Nz, Ny, Nx)`` along the depth dimension (Nz).
+
+    **Example:**
+
+    .. code-block:: yaml
+
+        'obj_z_pad': {'pad_layers': [2, 2], 'pad_types': ['vacuum', 'vacuum']}
+
+    This will pad 2 vacuum layers on top, and another 2 vacuum layer on the bottom.
+    
+    The ``obj_Nlayer`` will be updated automatically.
+
     This is useful for expanding reconstructed object to test object positioning or total thickness. 
-    Note that one should also adjust the 'probe_z_shift' (loaded probe) or 'probe_defocus' (simulated probe) accordingly, 
-    because padding object on the top surface will effectively change the entrance plane of the probe. 
-    For example, if one padded 10 nm of vacuum on the top surface, one should also add a 10 nm underfocus (for simulated probe via 'probe_defocus'), 
-    or apply a z-shift of -10 nm to the loaded probe via 'probe_z_shift' to maintain the relative position of probe and object.
+
+    See :class:`ObjZPad` for more details.
+
+    .. note::
+        Padding the top surface effectively changes the entrance plane.
+        You must adjust the axial probe position to maintain the relative geometry:
+        
+        - **Simulated Probe:** Add a corresponding underfocus to ``probe_aberrations``.
+        - **Loaded Probe:** Apply a negative z-shift to ``probe_z_shift`` (e.g., if padding 20 Ang (i.e., 2 nm) vacuum on top, use ``probe_z_shift: -20``).
+    
     """
 
     obj_z_resample: Optional[ObjZResample] = Field(default=None, description="Resampling object along depth dimension")
     """
-    type: null or dict, i.e., {'mode': 'scale_Nlayer', 'value': 2}. 
-    This applies additional resampling to the 4D object (omode, Nz, Ny, Nx) along depth dimension (Nz), 
-    and modifies the slice thickness altogether to preserve prod(amp), sum(phase), and total thickness. 
-    'mode' can take string options including 'scale_Nlayer', 'scale_slice_thickness', 'target_Nlayer', 'target_slice_thickness', or null to disable it. 
-    'value' takes the corresponding value with the specified mode. 
-    The values for 'scale_Nlayer', 'scale_slice_thickness', and 'target_slice_thickness' can be any positive float, while 'target_Nlayer' must take a positive integer. 
-    This is useful when we need to reslice the reconstructed object into different slice thicknesses including converting between single and multislice objects.
+    Applies additional resampling to the 4D object along the depth dimension, 
+    modifying slice thickness while preserving prod(amp), sum(phase), and total thickness.
+
+    **Example:**
+
+    .. code-block:: yaml
+
+        'obj_z_resample': {'mode': 'scale_Nlayer', 'value': 2}
+
+    This will double the number of ``obj_Nlayer`` while halving the ``obj_slice_thickness``.
+    
+    See :class:`ObjZResample` for details.
+
+    This is useful for reslicing the reconstructed object into different slice thicknesses, including converting between single-slice and multislice objects.
     """
     
     # Input source and params
     meas_source: Literal['file', 'custom'] = Field(default="file", description="Data source for measurements")
     """
-    Data type of the measurements (diffraction patterns). 
-    Currently supporting 'file' or 'custom'. 
+    Data source for the diffraction patterns.
+    
+    Available options: ``file``, ``custom``.
     """
 
     meas_params: Union[FilePathWithKey, np.ndarray] = Field(description="Parameters for measurement loading") # Required
     """
-    type: dict, or numpy array. 
-    For file type of 'mat', or 'hdf5', it's preferred to provide both the 'path' and 'key' in a dict
-    {'path': <PATH_TO_DATA>, 'key': <DATA_KEY>} to retrieve the data matrix, although PtyRAD would try to retrive the data even without a key. 
-    'tif' would only need the {'path':<PATH_TO_DATA>}. 
-    For 'raw' you can optionally pass in 'shape':(N,height,width), 'offset':int, 'gap':int to load the .raw files from EMPAD1 and pre-processed EMPAD datasets. 
-    For example, {'path': <PATH_TO_DATA>, 'offset':0, 'gap':0} can be used to load pre-processed EMPAD2 raw dataset with no gap between binary diffraction patterns. 
-    The 'shape' will be automatically filled in from 'exp_params', while 'offset':0, and 'gap':1024 are default values for EMPAD1 datasets. 
-    For py4dstem processed diffraction patterns (hdf5), use '/datacube_root/datacube/data' for your 'key'. 
-    For 'custom' source, pass the numpy array to the 'measurements_params' entry after you load this .yml as a dict
+    Configuration for loading measurement data. 
+    
+    **Examples by Source Type:**
+
+    - **HDF5 / MAT**:
+
+      .. code-block:: yaml
+
+          'meas_source': 'file'
+          'meas_params': {'path': '/data/scan.h5', 'key': '/entry/data'}
+
+    - **TIF**:
+
+      .. code-block:: yaml
+
+          'meas_source': 'file'
+          'meas_params': {'path': '/data/scan.tif'}
+
+    - **EMPAD / Raw** (With shape/offset/gap):
+
+      .. code-block:: yaml
+
+          'meas_source': 'file'
+          'meas_params': {'path': '/data/scan.raw', 'offset': 0, 'gap': 1024}
+
+          # The ``shape`` can be explictly passed in as a list of ints [N, height, width], 
+          # or it will be automatically filled in from ``init_params``,
+          # while ``'offset': 0``, and ``'gap': 1024`` are default values for EMPAD1 datasets. 
+
+    - **Custom** (In-memory Numpy):
+
+      .. code-block:: python
+      
+          # Python code block
+
+          # Load the YAML params file as a dict
+          params = load_params(params_path, validate=True)
+          
+          # Update corresponding fields
+          params['init_params']['meas_source'] = 'custom'
+          params['init_params']['meas_params] = custom_dataset # numpy.array
+
+          # Pass params to PtyRADSolver
+          ptycho_solver = PtyRADSolver(params, device=device, logger=logger)
+          ptycho_solver.run()
     """
     
     probe_source: Literal['simu', 'PtyRAD', 'PtyShv', 'py4DSTEM','custom'] = Field(default="simu",description="Data source for probe")
     """
-    Data source of the probe. Currently supporting 'simu', 'PtyRAD', 'PtyShv', 'py4DSTEM', and 'custom'
+    Data source for the probe. 
+    
+    Available options: ``simu``, ``PtyRAD``, ``PtyShv``, ``py4DSTEM``, ``custom``.
     """
     
     probe_params: Optional[Union[pathlib.Path, np.ndarray]] = Field(default=None, description="Parameters for probe loading/initialization")
     """
-    type: null, str, or numpy array. 
-    Parameters of the probe loading/initialization. 
-    For 'simu' (simulating probe), set this to null, and probe will be simulated based on values set in `init_params` including kV, conv_angle, and aberrations. 
-    For loading probe from 'PtyRAD' or 'PtyShv', provide a str of <PATH_TO_RECONSTRUCTION_FILE>. 
-    For 'custom' probe source, pass the 3D numpy array to the 'probe_params' entry after you load this .yml as a dict
+    Configuration for loading or initializing the probe.
+
+    **Examples by Source Type:**
+
+    - **Simulation** (Default):
+
+      .. code-block:: yaml
+
+          'probe_source': 'simu'
+          'probe_params': null  
+          
+          # Probe will be simulated based on values set in ``init_params`` 
+          # (e.g., kV, conv_angle, aberrations).
+
+    - **Load from Reconstruction** (PtyRAD / PtyShv / py4DSTEM):
+
+      .. code-block:: yaml
+
+          'probe_source': 'PtyRAD'
+          'probe_params': '/path/to/previous_reconstruction.h5'
+
+    - **Custom** (In-memory Numpy):
+
+      .. code-block:: python
+      
+          # Python code block
+
+          # Load the YAML params file as a dict
+          params = load_params(params_path, validate=True)
+          
+          # Update corresponding fields
+          params['init_params']['probe_source'] = 'custom'
+          params['init_params']['probe_params'] = custom_probe_3d # numpy.array
+
+          # Pass params to PtyRADSolver
+          ptycho_solver = PtyRADSolver(params, device=device, logger=logger)
+          ptycho_solver.run()
     """
     
     pos_source: Literal['simu', 'PtyRAD', 'PtyShv', 'py4DSTEM', 'foldslice_hdf5', 'custom'] = Field(default="simu", description="Data source for probe positions")
     """
-    Data source of the probe positions. 
-    Currently supporting 'simu', 'PtyRAD', 'PtyShv', 'py4DSTEM', 'foldslice_hdf5', and 'custom'
+    Data source for scan positions. 
+    
+    Available options: ``simu``, ``PtyRAD``, ``PtyShv``, ``py4DSTEM``, ``foldslice_hdf5``, ``custom``.
     """
     
     pos_params: Optional[Union[pathlib.Path, np.ndarray]] = Field(default=None, description="Parameters for probe positions loading/initialization")
     """
-    type: null, str, or numpy array. 
-    Parameters of the probe positions loading/initialization. 
-    For 'simu' (simulating probe positions), provide null and check whether you need 'scan_flipT'. 
-    The positions would be simulated based on 'N_scan_slow', 'N_scan_fast', 'scan_step_size', and 'scan_affine'. 
-    For loading probe positions from 'PtyRAD' or 'PtyShv', provide a str of <PATH_TO_RECONSTRUCTION_FILE>. 
-    For loading probe positions from 'foldslice_hdf5', provide a str of <PATH_TO_POSITION_FILE>. 
-    These hdf5 files are generated from many APS instruments that were previously handled in `fold_slice` using 'p.src_positions='hdf5_pos'. 
-    For 'custom' probe position source, pass the (N_scans,2) numpy array to the 'pos_params' entry after you load this .yml as a dict
+    Configuration for loading or initializing scan positions.
+
+    **Examples by Source Type:**
+
+    - **Simulation** (Default):
+
+      .. code-block:: yaml
+
+          'pos_source': 'simu'
+          'pos_params': null
+
+          # Positions will be simulated based on ``N_scan_slow``, 
+          # ``N_scan_fast``, ``scan_step_size``, and ``scan_affine``.
+
+    - **Load from Reconstruction** (PtyRAD / PtyShv / py4DSTE<):
+
+      .. code-block:: yaml
+
+          'pos_source': 'PtyRAD'
+          'pos_params': '/path/to/previous_reconstruction.h5'
+
+    - **APS Instrument Data** (fold_slice HDF5):
+
+      .. code-block:: yaml
+
+          'pos_source': 'foldslice_hdf5'
+          'pos_params': '/path/to/positions.h5'
+          
+          # These HDF5 files are generated from APS instruments 
+          # (previously handled in `fold_slice` via 'p.src_positions=hdf5_pos').
+
+    - **Custom** (In-memory Numpy):
+
+      .. code-block:: python
+      
+          # Python code block
+
+          # Load the YAML params file as a dict
+          params = load_params(params_path, validate=True)
+          
+          # Update corresponding fields
+          params['init_params']['pos_source'] = 'custom'
+          params['init_params']['pos_params'] = custom_positions_N_by_2 # numpy.array
+
+          # Pass params to PtyRADSolver
+          ptycho_solver = PtyRADSolver(params, device=device, logger=logger)
+          ptycho_solver.run()
     """
     
     obj_source: Literal['simu', 'PtyRAD', 'PtyShv', 'py4DSTEM','custom'] = Field(default="simu", description="Data source for object")
     """
-    Data source of the object. 
-    Currently supporting 'simu', 'PtyRAD', 'PtyShv', 'py4DSTEM', and 'custom'
+    Data source for the object. 
+    
+    Available options: ``simu``, ``PtyRAD``, ``PtyShv``, ``py4DSTEM``, ``custom``.
     """
     
     obj_params: Optional[Union[List[int], pathlib.Path, np.ndarray]] = Field(default=None, description="Parameters for object loading/initialization")
     """
-    type: null, list of 4 ints, str, or numpy array. 
-    Parameters of the object loading/initialization. 
-    For 'simu' (simulating object), provide a list of 4 ints (omode, Nz, Ny, Nx) to specify the object shape or null to let PtyRAD determine it 
-    (null is suggested and is consistent with how PtyShv creates their initial object). 
-    For loading object from 'PtyRAD' or 'PtyShv', provide a str of <PATH_TO_RECONSTRUCTION_FILE>. 
-    For 'custom' object source, pass the 4D numpy array to the 'obj_params' entry after you load this .yml as a dict
+    Configuration for loading or initializing the object.
+
+    **Examples by Source Type:**
+
+    - **Simulation** (Default):
+
+      .. code-block:: yaml
+
+          'obj_source': 'simu'
+          'obj_params': [1, 100, 256, 256] 
+          
+          # Format is [omode, Nz, Ny, Nx].
+          # Set to null to let PtyRAD automatically determine shape from scan/probe 
+          # (consistent with PtychoShelves behavior).
+
+    - **Load from Reconstruction** (PtyRAD / PtyShv / py4DSTEM):
+
+      .. code-block:: yaml
+
+          'obj_source': 'PtyRAD'
+          'obj_params': '/path/to/previous_reconstruction.h5'
+
+    - **Custom** (In-memory Numpy):
+
+      .. code-block:: python
+      
+          # Python code block
+
+          # Load the YAML params file as a dict
+          params = load_params(params_path, validate=True)
+          
+          # Update corresponding fields
+          params['init_params']['obj_source'] = 'custom'
+          params['init_params']['obj_params'] = custom_object_4d # numpy.array
+
+          # Pass params to PtyRADSolver
+          ptycho_solver = PtyRADSolver(params, device=device, logger=logger)
+          ptycho_solver.run()
     """
 
     tilt_source: Literal['simu', 'PtyRAD', 'file','custom'] = Field(default="simu", description="Data source for object tilts")
     """
-    Data source of the object tilts. Currently supporting 'simu', 'PtyRAD', 'file', and 'custom'
+    Data source for object tilts. 
+    
+    Available options: ``simu``, ``PtyRAD``, ``file``, ``custom``.
     """
 
     tilt_params: Union[TiltParams, FilePathWithKey, pathlib.Path, np.ndarray] = Field(default_factory=TiltParams, description="Parameters for object tilt loading/initialization")
     """
-    type: dict, str, or numpy array. 
-    Parameters of the object tilt loading/initialization. 
-    The object tilt is implemeted by tilted Fresnel propagator, which should be fairly accurate within 1 degree (17 mrad). 
-    For 'simu' (simulating object tilts), provide a dict as {'tilt_type':'all', 'init_tilts':[[tilt_y, tilt_x]]}. 
-    tilt_y and tilt_x are floats in unit of mrad, defaults are [[0,0]]. 
-    'tilt_type' can be either 'all' or 'each'. 
-    'tilt_type': 'all' will create a (1,2) tilt array specifying all positions has the same tilt as 'initial_tilts', 
-    this is a globally uniform object tilt that can be either fixed, hypertune optimized, or AD-optimized (if learning rate of 'obj_tilts' != 0). 
-    'tilt_type': 'each' will create a (N_scans,2) tilt array that all position starts at the same 'init_tilts', 
-    but it can be later individually optimized through AD by setting learning rate of 'obj_tilts' != 0, which allows pos-dependent local object tilt correction. 
-    For loading object tilts from 'PtyRAD', provide a str of <PATH_TO_RECONSTRUCTION_FILE>. 
-    If loading object tilt from 'file', provide a dict as {'path': <PATH_TO_DATA>, 'key': <DATA_KEY>} similar to 'meas_params'. 
-    The supported file types are 'tif', 'mat', 'hdf5', and 'npy'. 
-    Note that the object tilt array must be 2D with shape equals to (1,2) or (N,2). 
-    For 'custom' object tilts source, pass the (N_scans,2) or (1,2) numpy array to the 'tilt_params'. 
-    You should always provide an initial tilt guess for tilt correction either through hypertune or estimate with '/scripts/get_local_obj_tilts.ipynb',
-    because optimizing tilts with AD from scratch would be too slow and most likely arrive at barely corrected, slice-shifted object
+    Configuration for loading or initializing object tilts.
+
+    **Examples by Source Type:**
+
+    - **Simulation** (Default):
+
+      .. code-block:: yaml
+
+          'tilt_source': 'simu'
+          'tilt_params': {'tilt_type': 'all', 'init_tilts': [[0.0, 0.0]]}
+          
+          # 'tilt_y' and 'tilt_x' are in mrad.
+          # 'tilt_type': 'all' creates a global (1,2) tilt array.
+          # 'tilt_type': 'each' creates a position-dependent (N_scans,2) array.
+
+    - **Load from Reconstruction** (PtyRAD):
+
+      .. code-block:: yaml
+
+          'tilt_source': 'PtyRAD'
+          'tilt_params': '/path/to/previous_reconstruction.h5'
+
+    - **Load from File**:
+
+      .. code-block:: yaml
+
+          'tilt_source': 'file'
+          'tilt_params': {'path': '/data/tilts.mat', 'key': 'tilt_angles'}
+          
+          # Supported formats: 'tif', 'mat', 'hdf5', 'npy'.
+          # Must be 2D array with shape (1,2) or (N,2).
+
+    - **Custom** (In-memory Numpy):
+
+      .. code-block:: python
+      
+          # Python code block
+
+          # Load the YAML params file as a dict
+          params = load_params(params_path, validate=True)
+          
+          # Update corresponding fields
+          params['init_params']['tilt_source'] = 'custom'
+          params['init_params']['tilt_params'] = custom_tilts # numpy.array (N,2) or (1,2)
+
+          # Pass params to PtyRADSolver
+          ptycho_solver = PtyRADSolver(params, device=device, logger=logger)
+          ptycho_solver.run()
+
+    .. note::
+        Object tilt is implemented via a tilted Fresnel propagator (accurate within ~ 1 deg, or 17 mrad).
+        
+        **Important:** Always provide an initial tilt guess (via hypertune or tutorial notebook: https://github.com/chiahao3/ptyrad/tree/main/tutorials/get_local_obj_tilts.ipynb). 
+        Optimizing tilts from scratch with AD is slow and most likely arrive at barely corrected, slice-shifted object.
+        
+        The initialized object tilts can be either fixed, hypertuned (global only), or AD-optimized (either global or local) if the learning rate of ``obj_tilts`` != 0.
     """
 
 ################################################################################################################################

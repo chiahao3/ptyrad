@@ -1,5 +1,5 @@
 """
-Defines available options and validation rules for the "model_params" dictionary.
+Defines available options and validation rules for the ``model_params`` dictionary.
 
 """
 

@@ -1,5 +1,5 @@
 """
-Defines available options and validation rules for the "constraint_params" dictionary.
+Defines available options and validation rules for the ``constraint_params`` dictionary.
 """
 
 from __future__ import annotations

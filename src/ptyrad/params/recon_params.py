@@ -1,5 +1,5 @@
 """
-Defines available options and validation rules for the "recon_params" dictionary.
+Defines available options and validation rules for the ``recon_params`` dictionary.
 """
 
 from __future__ import annotations
