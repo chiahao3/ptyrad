@@ -45,10 +45,11 @@ def create_starter_project(project_name: str = "ptyrad", force: bool = False):
             
         print(f"Created starter project at: {dest}")
         print( "   Structure:")
-        print(f"   ├── {dest.name}/data/     (Place your data here)")
-        print(f"   ├── {dest.name}/output/   (Check results here)")
-        print(f"   ├── {dest.name}/params/   (Template params files)")
-        print(f"   └── {dest.name}/scripts/  (Starter scripts)")
+        print(f"   ├── {dest.name}/data/       (Place your data here)")
+        print(f"   ├── {dest.name}/output/     (Output results here)")
+        print(f"   ├── {dest.name}/params/     (Template params files)")
+        print(f"   ├── {dest.name}/tutorials/  (Tutorial notebooks)")
+        print(f"   └── {dest.name}/scripts/    (Example scripts)")
         
     except Exception as e:
         print(f"Failed to create project: {e}")

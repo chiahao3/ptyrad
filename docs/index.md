@@ -63,6 +63,7 @@ quickstart
 :caption: User Guide
 params/index
 launch/index
+tutorials/index
 examples/index
 ```
 

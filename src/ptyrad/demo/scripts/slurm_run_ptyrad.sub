@@ -25,7 +25,7 @@ echo params_path = ${PARAMS_PATH}
 ## The JOBID is an environment variable that'll be automatically set to 1-N via LoopSubmit.sh. If not set, default to 0.
 
 ## Execute the ptyrad CLI command `ptyrad run`
-ptyrad run --params_path "${PARAMS_PATH}" --gpuid 0 --jobid "${JOBID:-0}" 2>&1 # This runs via ptyrad CLI command on 1 GPU. 
+ptyrad run "${PARAMS_PATH}" --gpuid 0 --jobid "${JOBID:-0}" 2>&1 # This runs via ptyrad CLI command on 1 GPU. 
 
 ## For multi-GPU and mixed-precision, explicitly pass `--gpuid acc` so that we can defer the device assignment to the "HuggingFace accelerate" package
 ## These capabilities are only available while launched via `accelerate``, and are only supported on non-MIG nodes so we can only do c0001 (full A100s)

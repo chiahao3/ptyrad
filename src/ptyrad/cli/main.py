@@ -53,7 +53,8 @@ def main():
 
     # run
     parser_run = subparsers.add_parser("run", help="Run PtyRAD reconstruction")
-    parser_run.add_argument("--params_path", "-p", type=str, required=True)
+    parser_run.add_argument("config_path", nargs="?", help="Path to params .yaml file") # Positional arg is preferred
+    parser_run.add_argument("--params_path", "-p", type=str, required=False, help="(LEGACY) Path to params .yaml file") # Legacy flag
     parser_run.add_argument("--skip_validate", action="store_true", help="Skip parameter validation and default filling. Use only if your params file is complete and consistent.")
     parser_run.add_argument("--gpuid", type=str, required=False, default="0", help="GPU ID to use ('acc', 'cpu', or an integer)")
     parser_run.add_argument("--jobid", type=int, required=False, default=0, help="Unique identifier for hypertune mode with multiple GPU workers")
@@ -70,7 +71,7 @@ def main():
 
     # export-meas
     parser_export = subparsers.add_parser("export-meas", help="Export initialized measurements file to disk")
-    parser_export.add_argument("--params_path", type=str, required=True)
+    parser_export.add_argument("params_path", nargs="?", help="Path to params .yaml file") # Positional arg is preferred
     parser_export.add_argument("--skip_validate", action="store_true", help="Skip parameter validation and default filling. Use only if your params file is complete and consistent.")
     parser_export.add_argument("--output", type=str, help="Optional output path / file type (.mat, .hdf5, .tif, .npy) for the exported array")
     parser_export.add_argument("--reshape", type=int, nargs="+", help="Optional new shape for the exported array, e.g. --reshape 128 128 128 128")
@@ -79,7 +80,7 @@ def main():
     
     # validate-params
     parser_validate = subparsers.add_parser("validate-params", help="Validate parameter file")
-    parser_validate.add_argument("--params_path", type=str, required=True)
+    parser_validate.add_argument("params_path", nargs="?", help="Path to params .yaml file") # Positional arg is preferred
     parser_validate.set_defaults(func=validate_params)
 
     # gui (placeholder) #TODO 

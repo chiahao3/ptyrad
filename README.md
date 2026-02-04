@@ -12,9 +12,10 @@
 | [**Paper**](https://arxiv.org/abs/2505.07814)
 | [**Youtube**](https://www.youtube.com/@ptyrad_official)
 
-*PtyRAD* performs ptychographic reconstruction using an [automatic differention](https://en.wikipedia.org/wiki/Automatic_differentiation) (AD) framework powered by [*PyTorch*](https://pytorch.org/), which enables flexible and efficient implementation of gradient descent optimization. See our [Microscopy and Microanalysis paper](https://academic.oup.com/mam/article/doi/10.1093/mam/ozaf070/8222545?utm_source=authortollfreelink&utm_campaign=mam&utm_medium=email&guestAccessKey=e9e13516-273a-4e46-bec4-7488e9001d7d) and the [Zenodo record](https://doi.org/10.5281/zenodo.15273176) for more information and demo datasets.
+*PtyRAD* performs ptychographic reconstruction using an [automatic differention](https://en.wikipedia.org/wiki/Automatic_differentiation) (AD) framework powered by [*PyTorch*](https://pytorch.org/), enabling flexible and efficient implementation of gradient descent optimization. See our [Microscopy and Microanalysis paper](https://academic.oup.com/mam/article/doi/10.1093/mam/ozaf070/8222545?utm_source=authortollfreelink&utm_campaign=mam&utm_medium=email&guestAccessKey=e9e13516-273a-4e46-bec4-7488e9001d7d) and the [Zenodo record](https://doi.org/10.5281/zenodo.15273176) for more information and demo datasets.
 
 ## Features
+- Automatic Differentiation (AD) based optimization
 - Gradient descent algorithms (Adam, SGD, LBFGS, etc.)
 - Mixed-state probe and object
 - Position correction
@@ -43,6 +44,8 @@ We recommend using [*Miniforge*](https://github.com/conda-forge/miniforge) for P
 
 We recommend installing *PtyRAD* using `pip` inside a fresh conda environment.
 
+### 1. Create and Activate the Python Environment
+
 First, create and activate a new conda environment **(ptyrad)** with Python > 3.10:
 ```sh
 conda create -n ptyrad python=3.12
@@ -50,7 +53,9 @@ conda activate ptyrad
 ```
 > 💡 **Note:** After activating the environment, your terminal prompt should show **(ptyrad)** at the beginning, indicating that the environment is active.
 
-Then install *PtyRAD* using:
+### 2. Install PtyRAD in the Python Environment
+
+Then install *PtyRAD* in the activated `(ptyrad)` environment using:
 ```sh
 pip install ptyrad
 ```
@@ -70,14 +75,14 @@ CUDA version, GPU support, and PyTorch build across platforms can be extremely c
 Once you activated `(ptyrad)` environment and installed *PtyRAD* via `pip install ptyrad`, you'll have access to the following command:
 
 ```bash
-# You can run this command anywhere from your terminal, as long as `ptyrad` is installed in the environment
+# You can run this command anywhere, as long as (ptyrad) environment is activated
 ptyrad check-gpu
 ```
 
-This command will print out relevant information of your CUDA information if available.
+This command will print your CUDA information and GPU availability if available.
 
 ### How do I update my existing PtyRAD installation to a newer release?
-Assuming you've activated the `(ptyrad)` environment and you've installed *PtyRAD* via pip, you can simply update your PtyRAD installation with:
+Assuming you've activated the `(ptyrad)` environment, and you've installed *PtyRAD* via pip, you can simply update your PtyRAD installation with:
 
 ```bash
 pip install -U ptyrad
@@ -85,23 +90,47 @@ pip install -U ptyrad
 
 ## Get Started with the Demo
 
-> 💡 **Note:** Download the demo datasets and scripts from our [Box folder](https://cornell.box.com/s/n5balzf88jixescp9l15ojx7di4xn1uo), which contains `demo/` and other tutorial slides and videos.
+> 💡 **Note:** *PtyRAD* now includes a **starter kit** that sets up the folder structure, tutorial notebooks, scripts, and example params files for you, with just one line of code!
 
-Before running the demo, please check the following:
-1. Demo datasets are downloaded and placed to the correct location under `demo/data/`
+### 1. Initialize a Workspace
+Run the following command to create a new folder (e.g., `ptyrad_demo`) containing all necessary templates and scripts:
+
+```bash
+# Activate your (ptyrad) python environment
+conda activate ptyrad
+
+# This creates a workspace folder 'ptyrad/' in your current location
+ptyrad init # or `ptyrad init <FOLDER_NAME> to use custom folder name
+
+# Enter the directory
+cd ptyrad/
+```
+
+### 2. Download the Demo Data
+We provide a helper script to automatically fetch the example datasets, and place it in the correct `ptyrad/data/` folder:
+```bash
+# Download and extract zip files (tBL-WSe2 and PSO, 1.3 GB), should be done in 1-2 mins.
+python ./scripts/download_demo_data.py
+```
+
+### 3. Run the Demo Reconstructions
+Please check the following before running the demo:
+1. Demo datasets are downloaded and placed to the correct location under `ptyrad/data/`
 2. `(ptyrad)` environment is created and activated (in VS Code it's the "Select Kernel")
-3. *PtyRAD* is installed in the `(ptyrad)` environment
-   
-Now you're ready to run a quick demo using one of two interfaces:
 
+Now you're ready to run a quick demo using one of two interfaces: 
 - **Interactive Jupyter interface (Recommended)**
- 
-    Use `demo/scripts/run_ptyrad_quick_example.ipynb` to quickly reconstruct the demo dataset in a Jupyter notebook
+  
+    Run the `ptyrad/tutorials/run_ptyrad.ipynb` in VS code, or run the following command in terminal:
+
+    ```bash
+    jupyter notebook ./tutorials/run_ptyrad.ipynb # Or direcly open it in VS code
+    ``` 
 
 - **Command-line interface** (like your *Miniforge Prompt* terminal)
     ```bash
-    # Here we assume working directory is set at `demo/`
-    ptyrad run --params_path "params/tBL_WSe2_reconstruct.yml"
+    # Assume working directory is at `ptyrad/` and (ptyrad) environment is activated
+    ptyrad run "params/examples/tBL_WSe2_reconstruct.yaml"
     ```
 
 ## Documentation

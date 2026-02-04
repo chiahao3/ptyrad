@@ -22,9 +22,19 @@ def get_examples(args):
     export_examples(dest_dir=args.dest, force=args.force)
 
 def run(args):
+    import sys
     from ptyrad.load import load_params
     from ptyrad.solver import PtyRADSolver
     from ptyrad.utils import CustomLogger, get_nested, print_system_info, resolve_seed_priority, set_accelerator, set_gpu_device
+    
+    # Prefer positional, fallback to flag
+    params_path = args.config_path or args.params_path
+    
+    # If neither is provided, we must fail manually because we made both optional
+    if params_path is None:
+        print("Error: missing params file.")
+        print("Usage: ptyrad run <path/to/params.yaml>")
+        sys.exit(1)
     
     # Setup CustomLogger
     logger = CustomLogger(
@@ -42,7 +52,7 @@ def run(args):
     accelerator = set_accelerator() 
 
     print_system_info()
-    params = load_params(args.params_path, validate=not args.skip_validate)
+    params = load_params(params_path, validate=not args.skip_validate)
     device = set_gpu_device(args.gpuid)
     seed = resolve_seed_priority(args_seed=args.seed, params_seed=get_nested(params, "init_params.random_seed", safe=True), acc=accelerator)
     ptycho_solver = PtyRADSolver(params, device=device, seed=seed, acc=accelerator, logger=logger)

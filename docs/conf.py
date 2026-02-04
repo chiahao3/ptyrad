@@ -25,7 +25,7 @@ extensions = [
     "sphinx_design", # Allows tab, grid card, drop down and more
     "sphinx_togglebutton", 
     "sphinxcontrib.autodoc_pydantic", 
-    "myst_parser",            
+    "myst_nb",
 ]
 
 templates_path = ['_templates']
@@ -38,7 +38,9 @@ autodoc_default_options = {
     'show-inheritance': False,
 }
 
-exclude_patterns = [] # Exclude api could also make the build much faster
+exclude_patterns = ['src/ptyrad/demo/tutorials',
+                    '**.ipynb_checkpoints',
+                    '_build'] # Exclude api could also make the build much faster
 autosummary_generate = True # This controls the api autosummary, which is quite slow. Toggle off for faster build while testing other pages.
 
 # Autodoc Pydantic configuration
@@ -76,10 +78,8 @@ myst_enable_extensions = [
 autodoc_typehints = 'description'
 autodoc_member_order = 'bysource'
 
-source_suffix = {
-    '.rst': 'restructuredtext',
-    '.md': 'markdown',
-}
+nb_execution_mode = "off" # DO NOT execute notebooks. Use the outputs already saved in the file.
+source_suffix = ["restructuredtext","myst-nb"]
 
 # -- Options for HTML output -------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
