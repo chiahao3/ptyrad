@@ -63,8 +63,9 @@ quickstart
 :caption: User Guide
 params/index
 launch/index
-tutorials/index
+workflow/index
 examples/index
+walkthrough/index
 ```
 
 ```{toctree}

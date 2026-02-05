@@ -1,0 +1,91 @@
+# Created with PtyRAD 0.1.0b13
+# Documentation: https://ptyrad.readthedocs.io/en/latest/
+# Detailed description for each option: https://ptyrad.readthedocs.io/en/latest/_autosummary/ptyrad.params.html
+
+# Run PtyRAD in hypertune mode to refine parameters
+
+# PSO
+
+init_params:
+    # Experimental params
+    probe_kv               : 300 # [kV] Acceleration voltage
+    probe_conv_angle       : 21.4 # [mrad] Semi-convergence angle for probe-forming aperture
+    probe_aberrations      : {'C10': 200} # [Angstrom, degree] Aberration coefficients in Krivanel polar notations. C10 = -df, and positive C10 refers to overfocus (stronger lens).  
+    meas_Npix              : 256 # Detector pixel number, EMPAD is 128. Only supports square detector for simplicity
+    pos_N_scan_slow        : 64 # Number of scan position along slow scan direction. Usually it's the vertical direction of acquisition GUI
+    pos_N_scan_fast        : 64 # Number of scan position along fast scan direction. Usually it's the horizontal direction of acquisition GUI
+    pos_scan_step_size     : 0.410 # [Angstrom] Step size between probe positions in a rectangular raster scan pattern
+    # Model complexity
+    probe_pmode_max        : 4 # Maximum number of mixed probe modes
+    obj_Nlayer             : 21 # Number of slices for multislice object
+    obj_slice_thickness    : 10 # [Angstrom] Slice thickness (propagation distance) for multislice ptychography. Typical values are between 1 to 20 Ang.
+    # Preprocessing
+    meas_permute           : null # Permute meas array with a list of ints to reorder datasets into (N_scans, ky, kx) if needed.
+    meas_reshape           : null # Reshape meas array with a list of 3 ints to convert the 4D diffraction dataset (Ry,Rx,ky,kx) into 3D (N_scans,ky,kx) for PtyRAD.
+    meas_flipT             : null # Flip meas orientation with a list of 3 binary booleans (0 or 1) as [flipud, fliplr, transpose]
+    meas_crop              : [null,null,[68,188],[68,188]] # Crops the 4D dataset with [[scan_slow_start, scan_slow_end], [scan_fast_start, scan_fast_end], [ky_start, ky_end], [kx_start, kx_end]]. 
+    meas_pad               : {'mode': 'on_the_fly', 'padding_type': 'power', 'target_Npix': 256, 'value': 0, 'threshold': 70} # Pads the diffraction pattern to side length = 'target_Npix' and correspondingly change the kMax, dx, Npix.
+    pos_scan_affine        : null # Affine transformation [scale, asymmetry, rotation, shear] of scan patterns. e.g, [1,0,3,0], rotation and shear are in unit of degree.
+    # Input source and params
+    meas_params            : {'path': 'data/PSO/sample_data_PrScO3.mat', 'key': 'dp'} # Supports EMPAD .raw, .hdf5, .mat, and .tif
+
+hypertune_params:
+    ## NOTE: PtyRAD provides integrated hyperparameter tuning via 'hypertune_params', so everything can be contained in a SINGLE params file.
+    ##       Use 'if_hypertune' to toggle ON/OFF of whether to use the hypertune mode.
+    ##       Optimizing in high-dimensional space is particularly challenging, so it's suggested to only turn on 2-4 params at most for each hypertune task.
+    ##       In this specific example, we switch on (i.e., 'state': true) both 'C10' and 'Nlayer' to refine our guess of probe overfocus and number of slices.
+    ##       The results of each hypertune trial in the study are saved in the sqlite3 database file (i.e., storage_path),
+    ##       which can be easily examined using VS Code extension: Optuna Dashboard
+    if_hypertune   : true
+    n_trials       : 50 # Number of hypertune trials. Each trial is a separate PtyRAD reconstruction with a set of optimizable parameter values (i.e., a configuration).
+    storage_path   : 'sqlite:///hypertune.sqlite3' # Path to the SQLite database file (i.e., sotrage) that will be automatically created with new hypertube run.
+    study_name     : 'PSO'
+    tune_params    :
+        batch_size : {'state': false, 'suggest': 'int', 'kwargs': {'low': 16, 'high': 512, 'log': true}}
+        dx         : {'state': false, 'suggest': 'float', 'kwargs': {'low': 0.1400, 'high': 0.1600, 'step': null, 'log': false}}
+        conv_angle : {'state': false, 'suggest': 'float', 'kwargs': {'low': 24, 'high': 26, 'step': 1, 'log': false}}
+        C10        : {'state': true, 'suggest': 'float', 'kwargs': {'low': -100, 'high': 100, 'step': 1, 'log': false}}
+        C12        : {'state': false, 'suggest': 'float', 'kwargs': {'low': -100, 'high': -100, 'step': 1, 'log': false}}
+        C21        : {'state': false, 'suggest': 'float', 'kwargs': {'low': -1000, 'high': 1000, 'step': 10, 'log': false}}
+        C23        : {'state': false, 'suggest': 'float', 'kwargs': {'low': -1000, 'high': 1000, 'step': 10, 'log': false}}
+        Nlayer     : {'state': true, 'suggest': 'int', 'kwargs': {'low': 15, 'high': 30, 'step': 1, 'log': false}}
+        scale      : {'state': false, 'suggest': 'float', 'kwargs': {'low': 0.8, 'high': 1.2, 'step': 0.02, 'log': false}} # This modifies the effective scan step size
+        rotation   : {'state': false, 'suggest': 'float', 'kwargs': {'low': -4, 'high': 4, 'step': 0.5, 'log': false}} # Scan rotation
+        tilt_y     : {'state': false, 'suggest': 'float', 'kwargs': {'low': -5, 'high': 5, 'step': 0.5, 'log': false}}
+        tilt_x     : {'state': false, 'suggest': 'float', 'kwargs': {'low': -5, 'high': 5, 'step': 0.5, 'log': false}}
+
+model_params:
+    detector_blur_std   : 1 # [k-space px] Gaussian blur std of forward simulated diffraction patterns. Typical value is 0-1 px.
+
+loss_params:
+    loss_single: {'state': true, 'weight': 1.0, 'dp_pow': 0.5} # Amplitude noise model for typical dataset (dose-sufficient) under the maximum-likelihood formalism
+    loss_sparse: {'state': true, 'weight': 0.1, 'ln_order': 1} # L_n norm sparsity regularization calculated for object phase ('objp')
+
+constraint_params:
+    obj_zblur     : {'start_iter': 1,    'step': 1, 'end_iter': null, 'obj_type': 'both', 'kernel_size': 5, 'std': 1} # Apply a "z-direction" 1D Gaussian blur to the object.
+    mirrored_amp  : {'start_iter': 1,    'step': 1, 'end_iter': null, 'relax': 0.1, 'scale': 0.03, 'power': 4} # Apply a more flexible, ad hoc constraint for constraining amplitude using 1-scale*phase**power, which provide more arbitrary parameters to tune the constrained amplitude based on the phase.
+    obja_thresh   : {'start_iter': 1,    'step': 1, 'end_iter': null, 'relax': 0, 'thresh': [0.96, 1.04]} # Thresholds the object amplitude around 1 with specified range in 'thresh'.
+    objp_postiv   : {'start_iter': 1,    'step': 1, 'end_iter': null, 'relax': 0} # Apply a positivity constraint of the object phase by clipping negative values
+
+recon_params:
+
+    ## NOTE: The hyperparameter search space is usually high-dimensional, so we want to try as many trials as possible.
+    ##       We want to make sure the NITER is high enough to give informative evaluation of the reconstruciton quality,
+    ##       however, we also don't want to make N-hypertune-trials become N-full rectonstructions, as it's very inefficient.
+    ##       Setting NITER to an acceptable number, and let hypertune decides whether to prune unpromissing trials automatically.
+    NITER: 50 # Total number of reconstruction iterations. 1 iteration means a full pass of all selected diffraction patterns.
+
+    BATCH_SIZE: {'size': 32, 'grad_accumulation': 1} # Number of diffraction patterns processed simultaneously to get the gradient update.
+
+    ## NOTE: Since the purpose of hypertune is to explore the "promising parameters",
+    ##       generally we're not interested in the intermediate output files, so will set SAVE_ITERS to null to skip saving the large model files.
+    SAVE_ITERS: null # Number of completed iterations before saving the current reconstruction results (model, probe, object) and summary figures.
+
+    output_dir: 'output/PSO/'
+    recon_dir_affixes: ['minimal', 'model', 'loss', 'constraint'] # Customizable affixes of reconstruction folder name with presets like 'minimal', 'default', 'all'. See docs for 19 more detailed controls.
+    prefix: '' # Prefix this string to the reconstruction folder name. Note that a "_" will be automatically generated.
+    postfix: '' # Postfix this string to the reconstruction folder name. Note that a "_" will be automatically generated.
+    save_result: ['model', 'objp', 'probe_prop'] # Selected results to save every SAVE_ITERS. 
+    result_modes: {'obj_dim': [2, 3, 4], 'FOV': ['crop'], 'bit': ['8', 'raw']} # Specifies which object output is saved by their final dimension ('obj_dim'), whether to save the full or cropped FOV ('FOV') of object, and whether to save the raw or normalized bit depth version of object and probe.
+    selected_figs: ['loss', 'forward', 'probe_r_amp', 'pos'] # Selected figures that will be saved.
+    compiler_configs: {'enable': true} # Set to {'enable': true} to enable PyTorch JIT compilation for a 1.3-1.9x speedup on supported hardware.

@@ -25,9 +25,9 @@ def create_starter_project(project_name: str = "ptyrad", force: bool = False):
             shutil.rmtree(dest)
 
     # 2. Locate the internal demo folder
-    # We look for the package 'ptyrad.demo'
+    # We look for the package 'ptyrad.starter'
     try:
-        source_ref = resources.files("ptyrad.demo")
+        source_ref = resources.files("ptyrad.starter")
     except (ImportError, TypeError):
          # Fallback for localized dev installs or broken packages
          print("Error: Could not locate internal demo files.")
@@ -46,9 +46,9 @@ def create_starter_project(project_name: str = "ptyrad", force: bool = False):
         print(f"Created starter project at: {dest}")
         print( "   Structure:")
         print(f"   ├── {dest.name}/data/       (Place your data here)")
+        print(f"   ├── {dest.name}/notebooks/  (Workflow notebooks)")
         print(f"   ├── {dest.name}/output/     (Output results here)")
-        print(f"   ├── {dest.name}/params/     (Template params files)")
-        print(f"   ├── {dest.name}/tutorials/  (Tutorial notebooks)")
+        print(f"   ├── {dest.name}/params/     (Example params files)")
         print(f"   └── {dest.name}/scripts/    (Example scripts)")
         
     except Exception as e:
@@ -57,10 +57,10 @@ def create_starter_project(project_name: str = "ptyrad", force: bool = False):
         
 def _export_resource(resource_subpath: str, dest_name: str, dest_parent: str = ".", force: bool = False, description: str = "files"):
     """
-    Internal helper to copy a specific subfolder from ptyrad.demo to a local destination.
+    Internal helper to copy a specific subfolder from ptyrad.starter to a local destination.
     
     Args:
-        resource_subpath: Path inside ptyrad.demo (e.g., "params" or "params/templates")
+        resource_subpath: Path inside ptyrad.starter (e.g., "params" or "params/templates")
         dest_name: Name of the folder to create locally (e.g., "params" or "templates")
         dest_parent: Local directory where dest_name will be created
         force: Whether to overwrite existing folders
@@ -85,8 +85,8 @@ def _export_resource(resource_subpath: str, dest_name: str, dest_parent: str = "
 
     # 3. Copy the resource
     try:
-        # Access the root 'ptyrad.demo' package
-        demo_root = resources.files("ptyrad.demo")
+        # Access the root 'ptyrad.starter' package
+        demo_root = resources.files("ptyrad.starter")
         
         # Drill down to the specific subfolder (e.g. demo/params or demo/params/templates)
         # We split by '/' to handle nested paths like "params/templates" safely

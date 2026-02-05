@@ -23,7 +23,8 @@ extensions = [
     "sphinx.ext.napoleon", 
     "sphinx.ext.viewcode",
     "sphinx_design", # Allows tab, grid card, drop down and more
-    "sphinx_togglebutton", 
+    "sphinx_togglebutton",
+    "sphinx_copybutton", 
     "sphinxcontrib.autodoc_pydantic", 
     "myst_nb",
 ]
@@ -38,7 +39,7 @@ autodoc_default_options = {
     'show-inheritance': False,
 }
 
-exclude_patterns = ['src/ptyrad/demo/tutorials',
+exclude_patterns = ['src/ptyrad/starter/',
                     '**.ipynb_checkpoints',
                     '_build'] # Exclude api could also make the build much faster
 autosummary_generate = True # This controls the api autosummary, which is quite slow. Toggle off for faster build while testing other pages.

@@ -2,10 +2,20 @@
 
 # Examples
 
-Here we provide a couple example params files for common tasks.
+Here we provide a couple example params files with publicly available datasets.
 
 ```{toctree}
 :maxdepth: 2
 :hidden:
 
+tBL_WSe2
+PSO
+
 ```
+## tBL-WSe2
+- **Reference:** [Achieving sub-0.5-angstrom–resolution ptychography in an uncorrected electron microscope](https://doi.org/10.1126/science.adl2029)
+- **Params file:** {doc}`tBL_WSe2`
+
+## PSO
+- **Reference:** [Electron ptychography achieves atomic-resolution limits set by lattice vibrations](https://doi.org/10.1126/science.abg2533)
+- **Params file:** {doc}`PSO`

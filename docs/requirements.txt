@@ -26,3 +26,4 @@ sphinx-autodoc-typehints==3.2.0
 sphinx-design==0.6.1
 sphinx-togglebutton==0.3.2
 autodoc_pydantic==2.2.0
+sphinx-copybutton==0.5.2

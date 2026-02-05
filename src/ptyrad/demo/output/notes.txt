@@ -1,3 +1,0 @@
-# This file is used for Git to track this folder
-
-Use `output/` folder to organize your PtyRAD reconstructions

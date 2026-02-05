@@ -3,10 +3,9 @@ import json
 import os
 from pathlib import Path
 
-# --- CONFIG ---
-SOURCE_HUB = Path("tutorials") 
-DEST_PIP = Path("src/ptyrad/demo/tutorials")
-DEST_DOCS = Path("docs/tutorials") 
+SOURCE_HUB = Path("notebooks") 
+DEST_PIP = Path("src/ptyrad/starter/notebooks")
+DEST_DOCS = Path("docs/workflow") 
 
 def clean_notebook(file_path):
     """
@@ -25,7 +24,7 @@ def clean_notebook(file_path):
         json.dump(nb, f, indent=1, ensure_ascii=False)
         f.write("\n")
 
-def sync_all():
+def main():
     if not SOURCE_HUB.exists():
         print(f"❌ Source not found: {SOURCE_HUB}")
         return
@@ -68,4 +67,4 @@ def sync_all():
     print(f"   - Pip  (Lean): {DEST_PIP}")
 
 if __name__ == "__main__":
-    sync_all()
+    main()
