@@ -9,7 +9,9 @@ import numpy as np
 import torch
 from numpy.fft import fft2, fftshift, ifftshift
 
-from ptyrad.utils import make_sigmoid_mask, safe_filename, vprint
+from ptyrad.utils.math_ops import make_sigmoid_mask
+from ptyrad.utils.logging import vprint
+from ptyrad.io.save import safe_filename
 
 def plot_sigmoid_mask(Npix, relative_radius, relative_width, img=None, show_circles=False):
     """ Plot a sigmoid mask overlay on img with a line profile """

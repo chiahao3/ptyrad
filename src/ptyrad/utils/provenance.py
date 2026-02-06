@@ -37,7 +37,7 @@ def collect_provenance(init_params):
 
     import h5py
 
-    from ptyrad.load import load_ptyrad
+    from ptyrad.io.load import load_ptyrad
 
     # 1. Map internal component names to their config keys
     component_config_map = [

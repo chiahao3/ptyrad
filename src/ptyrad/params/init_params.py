@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Literal, Optional, Union, get_args
 import numpy as np
 from pydantic import BaseModel, Field, field_validator, model_serializer, model_validator
 
-from ptyrad.utils.aberrations import Aberrations
+from ptyrad.optics.aberrations import Aberrations
 
 
 class FilePathWithKey(BaseModel):

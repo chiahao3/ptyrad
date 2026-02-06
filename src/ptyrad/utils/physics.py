@@ -9,7 +9,7 @@ import numpy as np
 import torch
 from numpy.fft import fft2, fftfreq, fftshift, ifft2, ifftshift
 
-from .aberrations import Aberrations
+from ptyrad.optics.aberrations import Aberrations
 from .common import vprint
 
 

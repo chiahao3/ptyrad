@@ -7,7 +7,7 @@ import torch
 from torch.nn.functional import interpolate
 from torchvision.transforms.functional import gaussian_blur
 
-from ptyrad.utils import normalize_from_zero_to_one
+from ptyrad.utils.image_proc import normalize_from_zero_to_one
 
 # The CombinedLoss takes a user-defined dict of loss_params, which specifies the state, weight, and param of each loss term
 # The DP related loss takes a parameter of dp_pow which raise the DP with certain power, 

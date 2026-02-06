@@ -11,6 +11,7 @@ from .init_params import InitParams  # noqa: F401
 from .loss_params import LossParams  # noqa: F401
 from .model_params import ModelParams  # noqa: F401
 from .recon_params import ReconParams  # noqa: F401
+from .parser import load_params
 
 # This list controls what shows up in the "Modules" table in API reference, but not the order. 
 # Do NOT include the classes like PtyRADParams in the __all__ list.
@@ -24,4 +25,5 @@ __all__ = [
     "loss_params",
     "model_params",
     "recon_params",
+    "load_params"
 ]

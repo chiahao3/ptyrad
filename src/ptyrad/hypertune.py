@@ -9,8 +9,10 @@ from random import shuffle
 import numpy as np
 import torch
 
-from ptyrad.losses import get_objp_contrast
-from ptyrad.models import PtychoAD
+from ptyrad.core import PtychoAD
+from ptyrad.core.losses import get_objp_contrast
+from ptyrad.io.save import save_results
+from ptyrad.optics.aberrations import Aberrations
 from ptyrad.reconstruction import (
     create_optimizer,
     parse_torch_compile_configs,
@@ -18,13 +20,8 @@ from ptyrad.reconstruction import (
     recon_step,
     toggle_grad_requires,
 )
-from ptyrad.save import save_results
-from ptyrad.utils import (
-    parse_hypertune_params_to_str,
-    set_random_seed,
-    vprint,
-)
-from ptyrad.utils.aberrations import Aberrations
+from ptyrad.utils.common import set_random_seed
+from ptyrad.utils.logging import vprint
 from ptyrad.visualization import plot_summary
 
 # ==============================================================================
@@ -369,3 +366,16 @@ def compute_optuna_error(model, indices, metric):
         return model.loss_iters[-1][-1]
     else:
         raise ValueError(f"Unsupported hypertune error metric: '{metric}'. Expected 'contrast' or 'loss'.")
+    
+def parse_hypertune_params_to_str(hypertune_params):
+    
+    hypertune_str = ''
+    for key, value in hypertune_params.items():
+        if key[-2:].lower() == "lr":
+            hypertune_str += f"_{key}_{value:.1e}"
+        elif isinstance(value, (int, float)):
+            hypertune_str += f"_{key}_{value:.3g}"
+        else:
+            hypertune_str += f"_{key}_{value}"
+    
+    return hypertune_str

@@ -6,13 +6,16 @@ This is the PyTorch model that holds optimizable tensors and interacts with loss
 """
 
 import torch
-from torch.fft import fft2, ifft2
 import torch.nn as nn
+from torch.fft import fft2, ifft2
 from torchvision.transforms.functional import gaussian_blur
 
-from ptyrad.dataloader import MeasDataLoader
-from ptyrad.forward import multislice_forward_model_vec_all
-from ptyrad.utils import imshift_batch, torch_phasor, vprint
+from ptyrad.io.dataloader import MeasDataLoader
+from ptyrad.utils.image_proc import imshift_batch
+from ptyrad.utils.logging import vprint
+from ptyrad.utils.math_ops import torch_phasor
+
+from .forward import multislice_forward_model_vec_all
 
 # The obj_ROI_grid is modified from precalculation to on-the-fly generation for memory consumption
 # It has very little performance impact but saves lots of memory for large 4D-STEM data

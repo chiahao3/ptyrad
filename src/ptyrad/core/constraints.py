@@ -8,16 +8,15 @@ from torch.fft import fft2, fftfreq, fftn, ifft2, ifftn
 from torch.nn.functional import interpolate
 from torchvision.transforms.functional import gaussian_blur
 
-from ptyrad.load import normalize_constraint_params
-from ptyrad.utils import (
+from ptyrad.utils.image_proc import gaussian_blur_1d
+from ptyrad.utils.physics import near_field_evolution_torch
+from ptyrad.utils.logging import vprint
+from ptyrad.utils.math_ops import (
     dct_2d,
     fftshift2,
-    gaussian_blur_1d,
     idct_2d,
     ifftshift2,
     make_sigmoid_mask,
-    near_field_evolution_torch,
-    vprint,
 )
 from ptyrad.utils.math_ops import approx_torch_quantile
 
@@ -39,7 +38,7 @@ class CombinedConstraint(torch.nn.Module):
     def __init__(self, constraint_params, device='cuda', verbose=True):
         super(CombinedConstraint, self).__init__()
         self.device = device
-        self.constraint_params = normalize_constraint_params(constraint_params) # constraint_params should be normalized during param loading. This is just a safe-guard
+        self.constraint_params = constraint_params
         self.verbose = verbose
 
     def _should_apply_at_iter(self, constraint_name, niter):

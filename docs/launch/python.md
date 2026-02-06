@@ -7,7 +7,7 @@
 A simple python script for launching *PtyRAD* in **"reconstruction mode"**, which is fully configured by the params file.
 
 ```python
-from ptyrad.load import load_params
+from ptyrad.params import load_params
 from ptyrad.solver import PtyRADSolver
 from ptyrad.utils import print_system_info, set_gpu_device, CustomLogger
 

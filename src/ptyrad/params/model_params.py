@@ -5,29 +5,23 @@ Defines available options and validation rules for the ``model_params`` dictiona
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, Union
-
-import torch.optim
-from pydantic import BaseModel, Field, FilePath, field_validator, model_validator, model_serializer
 import pathlib
+from typing import Any, Dict, Literal, Optional, Union
+
+from pydantic import BaseModel, Field, FilePath, field_validator, model_serializer, model_validator
 
 
 class OptimizerParams(BaseModel):
     model_config = {"extra": "forbid"}
     
-    name: str = Field(default="Adam", description="Optimizer name")
+    name: Literal["Adadelta", "Adafactor", "Adagrad", "Adam",
+                  "AdamW", "SparseAdam", "Adamax", "ASGD", 
+                  "LBFGS", "Muon", "Nadam", "RAdam",
+                  "RMSprop", "Rprop", "SGD"] = Field(default="Adam", description="Optimizer name")
     configs: Dict[str, Any] = Field(default_factory=dict, description="Optimizer configurations")
     load_state: Optional[FilePath] = Field(
         default=None, description="Path str of a PtyRAD model file to load previous optimizer state"
     )
-
-    @field_validator("name")
-    @classmethod
-    def validate_optimizer_name(cls, v: str) -> str:
-        """Ensure optimizer name is a valid PyTorch optimizer."""
-        if not hasattr(torch.optim, v) or not callable(getattr(torch.optim, v)):
-            raise ValueError(f"Optimizer name '{v}' is not a valid PyTorch optimizer")
-        return v
     
     @model_serializer
     def serialize_model(self):

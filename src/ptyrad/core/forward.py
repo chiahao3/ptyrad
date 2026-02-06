@@ -6,7 +6,7 @@ Physical forwad model that generates diffraction patterns from mixed-state probe
 import torch
 from torch.fft import fft2, ifft2
 
-from ptyrad.utils import fftshift2
+from ptyrad.utils.math_ops import fftshift2
 
 # The forward model takes a batch of object patches and probes with their mixed states
 # By introducing and aligning the singleton dimensions carefully, 

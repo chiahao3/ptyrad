@@ -7,14 +7,15 @@ from __future__ import annotations
 import warnings
 from typing import Any, Dict, Literal, Optional
 
-import optuna
 from pydantic import BaseModel, Field, field_validator, model_serializer, model_validator
 
 
 class SamplerParams(BaseModel):
     model_config = {"extra": "forbid"}
 
-    name: str = Field(default="TPESampler", description="Sampler algorithm for hyperparameter tuning")
+    name: Literal["RandomSampler", "TPESampler", "GPSampler",
+                  "CmaEsSampler", "NSGAIISampler", "NSGAIIISampler",
+                  "GridSampler", "QMCSampler", "BruteForceSampler"] = Field(default="TPESampler", description="Sampler algorithm for hyperparameter tuning")
     configs: Dict[str, Any] = Field(default={}, description="Sampler configurations")
 
     @model_validator(mode='before')
@@ -28,21 +29,12 @@ class SamplerParams(BaseModel):
             }
         return values
 
-    @field_validator("name")
-    @classmethod
-    def validate_optimizer_name(cls, v: str) -> str:
-        """Ensure sampler name is a valid Hypertune sampler."""
-        if not hasattr(optuna.samplers, v) or not callable(getattr(optuna.samplers, v)):
-            raise ValueError(f"Hypertune sampler name '{v}' is not a valid Optuna sampler.")
-        if v == 'ParitalFixedSampler':
-            raise NotImplementedError(f"Optuna sampler '{v}' is currently not implemented in PtyRAD.")
-        return v
-
 
 class PrunerParams(BaseModel):
     model_config = {"extra": "forbid"}
 
-    name: str = Field(default="HyperbandPruner", description="Pruner algorithm for early termination")
+    name: Literal["MedianPruner", "PatientPruner", "PercentilePruner",
+                  "SuccessiveHalvingPruner", "HyperbandPruner", "ThresholdPruner"] = Field(default="HyperbandPruner", description="Pruner algorithm for early termination")
     configs: Dict[str, Any] = Field(default={}, description="Pruner configurations")
 
     @model_validator(mode='before')
@@ -54,18 +46,6 @@ class PrunerParams(BaseModel):
                 'reduction_factor': 2
             }
         return values
-
-    @field_validator("name")
-    @classmethod
-    def validate_pruner_name(cls, v: str) -> str:
-        """Ensure pruner name is a valid Hypertune pruner."""
-        if not hasattr(optuna.pruners, v) or not callable(getattr(optuna.pruners, v)):
-            raise ValueError(f"Hypertune pruner name '{v}' is not a valid Optuna pruner.")
-        if v == 'WilcoxonPruner':
-            raise NotImplementedError(f"Optuna pruner '{v}' is currently not implemented in PtyRAD.")
-        if v == 'NopPruner':
-            raise ValueError("Optuna NopPruner is an empty pruner, please set pruner_params = None if you don't want to prune.")
-        return v
 
 
 class TuneParam(BaseModel):

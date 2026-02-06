@@ -9,19 +9,17 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from ptyrad.save import copy_params_to_dir, make_output_folder, save_results
-from ptyrad.utils import (
-    get_blob_size,
-    ndarrays_to_tensors,
-    parse_sec_to_time_str,
-    safe_filename,
-    set_random_seed,
-    time_sync,
-    vprint,
-    sparse_sampler_hilbert,
-    sparse_sampler_fps,
+from ptyrad.io.adapter import ndarrays_to_tensors
+from ptyrad.io.save import copy_params_to_dir, make_output_folder, safe_filename, save_results
+from ptyrad.utils.common import set_random_seed
+from ptyrad.utils.grouping import (
     remap_batches_to_global,
+    sparse_sampler_fps,
+    sparse_sampler_hilbert,
 )
+from ptyrad.utils.image_proc import get_blob_size
+from ptyrad.utils.logging import vprint
+from ptyrad.utils.timing import parse_sec_to_time_str, time_sync
 from ptyrad.visualization import plot_pos_grouping, plot_summary
 
 # This suppresses the '..._inductor/compile_fx.py:236: UserWarning: TensorFloat32 tensor cores for float32 matrix multiplication available but not enabled. 

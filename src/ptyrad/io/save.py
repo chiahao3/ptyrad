@@ -11,15 +11,10 @@ import numpy as np
 import torch
 from tifffile import imwrite
 
-from ptyrad.utils import (
-    expand_presets,
-    generate_provenance_json,
-    get_time,
-    normalize_by_bit_depth,
-    safe_filename,
-    save_provenance_to_hdf5,
-    vprint,
-)
+from ptyrad.utils.timing import get_time
+from ptyrad.utils.logging import vprint
+from ptyrad.utils.image_proc import normalize_by_bit_depth
+from ptyrad.utils.provenance import generate_provenance_json, save_provenance_to_hdf5
 
 ###### These are data saving functions ######
 
@@ -89,6 +84,108 @@ def save_array(data, file_dir='', file_name='ptyrad_init_meas', file_format="hdf
         raise ValueError(f"Unsupported file format: {file_format}")
     
 ###### These are results saving functions ######
+
+def expand_presets(input_list, presets):
+    expanded = []
+    for tag in input_list:
+        if tag in presets:
+            expanded.extend(presets[tag])
+        else:
+            expanded.append(tag)
+    return list(dict.fromkeys(expanded))  # Removes duplicates, keeps order
+
+def safe_filename(filepath, verbose=False):
+    """
+    Ensures a filepath is safe across platforms by:
+    1. Converting relative paths to absolute
+    2. Limiting individual components to 255 characters
+    3. Handling total path length restrictions
+    4. Providing feedback when corrections are made
+    
+    Args:
+        filepath: The original filepath to make safe
+        verbose: Whether to print messages about corrections (default: False)
+    
+    Returns:
+        A modified filepath that should work across platforms
+    """
+    
+    import platform
+    
+    # Store original path for reporting
+    original_path = filepath
+    
+    # Handle relative paths by converting to absolute
+    filepath = os.path.abspath(filepath)
+    
+    # Platform detection
+    is_windows = platform.system() == 'Windows'
+    
+    # Check if path already has long path prefix on Windows
+    has_long_prefix = is_windows and filepath.startswith("\\\\?\\")
+    
+    # Early return if path is already valid
+    if not has_long_prefix:
+        # Check individual component limit (255 chars)
+        components_valid = True
+        sep = '\\' if is_windows else '/'
+        parts = filepath.split(sep)
+        for part in parts:
+            if len(part) > 255:
+                components_valid = False
+                break
+        
+        # Check total path length limit
+        length_valid = (len(filepath) <= 260) if is_windows else True
+        
+        # If everything is valid, return the absolute path
+        if components_valid and length_valid:
+            return filepath
+    
+    # Path requires correction - continue with fixing logic
+    # Path separator based on platform
+    sep = '\\' if is_windows else '/'
+    
+    # Split path into directory and filename
+    directory, filename = os.path.split(filepath)
+    
+    # Track if any changes were made
+    changes_made = False
+    
+    # Limit filename component to 255 chars (preserve extension)
+    if len(filename) > 255:
+        changes_made = True
+        name, ext = os.path.splitext(filename)
+        max_name_length = 255 - len(ext)
+        filename = name[:max_name_length] + ext
+    
+    # Handle directory components (limit each to 255 chars)
+    if directory:
+        parts = directory.split(sep)
+        for i, part in enumerate(parts):
+            if len(part) > 255:
+                changes_made = True
+                parts[i] = part[:255]
+        directory = sep.join(parts)
+    
+    # Recombine path
+    result_path = os.path.join(directory, filename)
+    
+    # Handle Windows total path length
+    if is_windows and len(result_path) > 260:
+        changes_made = True
+        # If still too long, apply the \\?\ prefix for long path support
+        if not result_path.startswith("\\\\?\\"):
+            # Ensure we're working with an absolute path for the \\?\ prefix
+            result_path = "\\\\?\\" + os.path.abspath(result_path)
+    
+    # Provide feedback if corrections were made
+    if changes_made and verbose:
+        print("Path corrected for compatibility:")
+        print(f"  Original: {original_path}")
+        print(f"  Corrected: {result_path}")
+    
+    return result_path
 
 def make_save_dict(output_path, model, params, optimizer, niter, indices, batch_losses):
     ''' Make a dict to save relevant paramerers '''
