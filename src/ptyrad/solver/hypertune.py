@@ -9,20 +9,21 @@ from random import shuffle
 import numpy as np
 import torch
 
-from ptyrad.core import PtychoAD
+from ptyrad.core import PtychoModel
 from ptyrad.core.losses import get_objp_contrast
 from ptyrad.io.save import save_results
 from ptyrad.optics.aberrations import Aberrations
-from ptyrad.reconstruction import (
+from ptyrad.utils.common import set_random_seed
+from ptyrad.utils.logging import vprint
+from ptyrad.visualization.model import plot_summary
+
+from .reconstruction import (
     create_optimizer,
     parse_torch_compile_configs,
     prepare_recon,
     recon_step,
     toggle_grad_requires,
 )
-from ptyrad.utils.common import set_random_seed
-from ptyrad.utils.logging import vprint
-from ptyrad.visualization import plot_summary
 
 # ==============================================================================
 # SECTION 1: OPTUNA SETUP
@@ -284,7 +285,7 @@ def optuna_objective(trial, params, init, loss_fn, constraint_fn, device='cuda',
     # ==============================================================================
    
     # Create the model and optimizer, prepare indices, batches, and output_path
-    model         = PtychoAD(init.init_variables, params['model_params'], device=device, verbose=verbose)
+    model         = PtychoModel(init.init_variables, params['model_params'], device=device, verbose=verbose)
     optimizer     = create_optimizer(model.optimizer_params, model.optimizable_params, verbose=verbose)
     indices, batches, output_path = prepare_recon(model, init, params)
       

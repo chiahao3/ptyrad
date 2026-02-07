@@ -628,46 +628,6 @@ def make_output_folder(
     vprint(f"output_path = '{output_path}' is generated!", verbose=verbose)
     return output_path
 
-def copy_params_to_dir(params_path, output_dir, params=None, verbose=True):
-    """
-    Copies the params file to the output directory if it exists. If the params file does not exist,
-    it dumps the provided params dictionary to a YAML file in the output directory.
-
-    Args:
-        params_path (str): Path to the params file (can be None if params are programmatically generated).
-        output_dir (str): Directory where the params file or YAML dump will be saved.
-        params (dict, optional): The programmatically generated params dictionary to save if no file exists.
-        verbose (bool): Whether to print verbose messages.
-    """
-    import os
-    import shutil
-
-    import yaml
-
-    # Ensure the output directory exists
-    os.makedirs(output_dir, exist_ok=True)
-
-    if params_path and os.path.isfile(params_path):
-        # If the params file exists, copy it to the output directory
-        file_name = os.path.basename(params_path)
-        output_path = os.path.join(output_dir, file_name)
-        shutil.copy2(params_path, output_path)
-        vprint(" ")
-        vprint(f"### Successfully copy '{file_name}' to '{output_dir}' ###", verbose=verbose)
-
-    elif params is not None:
-        # If no file exists, dump the params dictionary to a YAML file
-        output_path = os.path.join(output_dir, "params_dumped.yml")
-        with open(output_path, "w") as f:
-            yaml.safe_dump(params, f, sort_keys=False)
-        vprint(" ")
-        vprint(f"### No params file found. Dumped params dictionary to '{output_path}' ###")
-
-    else:
-        # If neither a file nor params are provided, skip with a warning
-        vprint(" ")
-        vprint("### Warning: No params file found and no params dictionary provided. Skipping. ###", verbose=verbose)
-
 @torch.compiler.disable
 def save_results(output_path, model, params, optimizer, niter, indices, batch_losses, collate_str=''):
     

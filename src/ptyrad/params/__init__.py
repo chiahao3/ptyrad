@@ -4,7 +4,7 @@ Parameter subpackage that define pydantic models for filling defaults, and valid
 """
 
 # Import classes for users so they can do `from ptyrad.params import PtyRADParams, ConstraintParams...`
-from .base import PtyRADParams # noqa: F401
+from .ptyrad_params import PtyRADParams # noqa: F401
 from .constraint_params import ConstraintParams  # noqa: F401
 from .hypertune_params import HypertuneParams  # noqa: F401
 from .init_params import InitParams  # noqa: F401
@@ -18,7 +18,7 @@ from .parser import load_params
 # Those classes are correctly imported at runtime by the above imports.
 # Including classes in the __all__ list will cram the autosummary table under ptyrad.params page.
 __all__ = [
-    "base",
+    "ptyrad_params",
     "constraint_params",
     "hypertune_params",
     "init_params",

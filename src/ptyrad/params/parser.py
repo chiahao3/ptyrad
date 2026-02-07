@@ -13,7 +13,6 @@ def load_params(file_path: str, validate: bool = True):
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"The specified file '{file_path}' does not exist. Please check your file path and working directory.")
     
-    print("### Loading params file ###")
     param_path, param_type = os.path.splitext(file_path)
     if param_type in (".yml", ".yaml"):
         params_dict = load_yml_params(file_path)
@@ -36,14 +35,8 @@ def load_params(file_path: str, validate: bool = True):
     
     # Pass into PtyRADParams (pydantic model) for default filling and validation
     if validate:
-        from .base import PtyRADParams
-        print("validate = True: Filling defaults and validating the params file...")
+        from .ptyrad_params import PtyRADParams
         params_dict = PtyRADParams(**params_dict).model_dump()
-        print("Success! Params file validated and defaults applied.")
-    else:
-            print("WARNING: validate = False: Skipping validation and default filling.")
-            print("         Ensure your params file is complete and consistent.")
-            print("         If you encounter issues, consider enabling validation or report the bug.")
     
     # Add the file path to the params_dict while we save the params file to output folder
     params_dict['params_path'] = file_path
@@ -56,7 +49,6 @@ def load_json_params(file_path):
     
     with open(file_path, "r", encoding='utf-8') as file:
         params_dict = json.load(file)
-    print("Success! Loaded .json file path =", file_path)
     return params_dict
 
 def load_toml_params(file_path):
@@ -94,7 +86,6 @@ def load_toml_params(file_path):
     except ImportError:
         raise ImportError("TOML support requires 'tomli' package for Python < 3.11 or built-in 'tomllib' for Python 3.11+. ")
     
-    print("Success! Loaded .toml file path =", file_path)
     return params_dict
 
 def load_yml_params(file_path):
@@ -102,7 +93,6 @@ def load_yml_params(file_path):
 
     with open(file_path, "r", encoding='utf-8') as file:
         params_dict = yaml.safe_load(file)
-    print("Success! Loaded .yml file path =", file_path)
     return params_dict
 
 def load_py_params(file_path):
@@ -114,7 +104,6 @@ def load_py_params(file_path):
         for name in dir(params_module)
         if not name.startswith("__")
     }
-    print("Success! Loaded .py file path =", file_path)
     return params_dict
 
 ###### These are sanitization functions for backward compatibility #####
@@ -207,3 +196,39 @@ def normalize_constraint_params(constraint_params):
         print("WARNING: For constraint_params, 'freq' is depracated since PtyRAD v0.1.0b11 and is automatically converted to 'step'.")
     
     return normalized_params
+
+###### Params exporting / copying #####
+
+def copy_params_to_dir(params_path, output_dir, params=None):
+    """
+    Copies the params file to the output directory if it exists. If the params file does not exist,
+    it dumps the provided params dictionary to a YAML file in the output directory.
+
+    Args:
+        params_path (str): Path to the params file (can be None if params are programmatically generated).
+        output_dir (str): Directory where the params file or YAML dump will be saved.
+        params (dict, optional): The programmatically generated params dictionary to save if no file exists.
+    """
+    import os
+    import shutil
+
+    import yaml
+
+    # Ensure the output directory exists
+    os.makedirs(output_dir, exist_ok=True)
+
+    if params_path and os.path.isfile(params_path):
+        # If the params file exists, copy it to the output directory
+        file_name = os.path.basename(params_path)
+        output_path = os.path.join(output_dir, file_name)
+        shutil.copy2(params_path, output_path)
+
+    elif params is not None:
+        # If no file exists, dump the params dictionary to a YAML file
+        output_path = os.path.join(output_dir, "params_dumped.yml")
+        with open(output_path, "w") as f:
+            yaml.safe_dump(params, f, sort_keys=False)
+
+    else:
+        # If neither a file nor params are provided, skip with a warning
+        return

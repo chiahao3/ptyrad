@@ -4,10 +4,10 @@ Core subpackage that defines the PyTorch implementaiton of ptychography models, 
 """
 from .constraints import CombinedConstraint
 from .losses import CombinedLoss
-from .models import PtychoAD
+from .models import PtychoModel
 
 __all__ = [
-    "PtychoAD",
+    "PtychoModel",
     "CombinedLoss",
     "CombinedConstraint",
 ]

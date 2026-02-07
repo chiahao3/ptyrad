@@ -855,7 +855,7 @@ def near_field_evolution_torch(Npix_shape, dx, dz, lambd, dtype=torch.complex64,
     """ Fresnel propagator """
     # Translated and simplified from Yi's fold_slice Matlab implementation into PyTorch by Chia-Hao Lee
     # This is currently only used in 'obj_z_recenter' constraint to shift the probe defocus.
-    # The forward pass uses the propagator direcly constructed in `PtychoAD.get_propagators`` for efficiency.
+    # The forward pass uses the propagator direcly constructed in `PtychoModel.get_propagators`` for efficiency.
     from ptyrad.utils import ifftshift2
 
     ygrid = (torch.arange(-Npix_shape[0] // 2, Npix_shape[0] // 2, device=device) + 0.5) / Npix_shape[0]

@@ -151,7 +151,7 @@ def yaml2json(input_filepath, output_filepath):
 # Testing functions
 def test_loss_fn(model, indices, loss_fn):
     """ Print loss values for each term for convenient weight tuning """
-    # model: PtychoAD model
+    # model: PtychoModel model
     # indices: array-like indices indicating which probe position to evaluate
     # measurements: 4D-STEM data that's already passed to DEVICE
     # loss_fn: loss function object created from CombinedLoss

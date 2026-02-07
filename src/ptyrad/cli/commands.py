@@ -70,7 +70,7 @@ def print_info(args):
 def export_meas(args):
     from pathlib import Path
 
-    from ptyrad.initialization import Initializer
+    from ptyrad.initialization.initialization import Initializer
     from ptyrad.params import load_params
     
     # 1. Load init_params

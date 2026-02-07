@@ -45,9 +45,6 @@ def load_raw(file_path, shape, dtype=np.float32, offset=0, gap=1024):
 
     # Extract just the 'data' part (ignoring the gaps)
     data = raw_data['data']
-    print("Success! Loaded .raw file path =", file_path)
-    print("Imported .raw data shape =", data.shape)
-    print("Imported .raw data type =", data.dtype)
     return data
 
 def load_tif(file_path):
@@ -58,8 +55,7 @@ def load_tif(file_path):
         raise FileNotFoundError(f"The specified file '{file_path}' does not exist. Please check your file path and working directory.")
     
     data = imread(file_path)
-    print("Success! Loaded .tif file path =", file_path)
-    print("Imported .tif data shape =", data.shape)
+
     return data
 
 def load_npy(file_path):
@@ -69,8 +65,7 @@ def load_npy(file_path):
         raise FileNotFoundError(f"The specified file '{file_path}' does not exist. Please check your file path and working directory.")
     
     data = np.load(file_path)
-    print("Success! Loaded .npy file path =", file_path)
-    print("Imported .npy data shape =", data.shape)
+
     return data
 
 def load_array_from_file(
@@ -323,17 +318,10 @@ def load_mat(
     
     # Handle different key scenarios
     if key in (None, "", []):
-        print(f"Success! Loaded .mat file as a dict from path = '{file_path}'")
         return mat_contents
     
     elif isinstance(key, str):
         data = get_nested(mat_contents, key=key, delimiter=delimiter)
-        print(
-            f"Success! Loaded .mat file with key = '{key}' from path = '{file_path}'"
-        )
-        if isinstance(data, np.ndarray):
-            print(f"Imported .mat data shape = {data.shape}")
-            print(f"Imported .mat data type = {data.dtype}")
         return data
     
     elif isinstance(key, list):
@@ -357,9 +345,6 @@ def load_mat(
                 "Tip: If you don't know the correct key, try 'key=None' to load the entire file as a dict."
             )
 
-        print(
-            f"Success! Loaded .hdf5 file as a dict with keys = {key} from path = '{file_path}'"
-        )
         return datasets_dict
 
     else:
@@ -368,8 +353,7 @@ def load_mat(
         )    
 
 def load_hdf5(
-    file_path: str, key: KeyType = None, delimiter: str = ".", verbose: bool = True,
-) -> Union[np.ndarray, dict[str, np.ndarray]]:
+    file_path: str, key: KeyType = None, delimiter: str = ".") -> Union[np.ndarray, dict[str, np.ndarray]]:
     """
     Load dataset(s) from an HDF5 file, recursively if groups are encountered.
 
@@ -380,7 +364,6 @@ def load_hdf5(
             - If str: Load a single dataset or group. Supports hierarchical keys (e.g., 'group1.dataset1').
             - If list[str]: Load multiple datasets. The returned dictionary will have a flattened structure with the hierarchical key strings as keys.
         delimiter (str): Delimiter for hierarchical keys (default: ".").
-        verbose (bool): Flag to print verbose messages, default is True.
 
     Returns:
         data (np.ndarray or dict): The loaded dataset(s).
@@ -436,18 +419,10 @@ def load_hdf5(
     with h5py.File(file_path, "r") as hf:
         if key in (None, "", []):
             file_dict = {k: _recursively_load(hf[k]) for k in hf.keys()}
-            if verbose:
-                print(f"Success! Loaded .hdf5 file as a dict from path = '{file_path}'")
             return file_dict
 
         elif isinstance(key, str):
             data = _recursively_load(hf, key=key, delimiter=delimiter)
-            if verbose:
-                print(f"Success! Loaded .hdf5 file with key = '{key}' from path = '{file_path}'")
-            if isinstance(data, np.ndarray):
-                if verbose:
-                    print(f"Imported .hdf5 data shape = {data.shape}")
-                    print(f"Imported .hdf5 data type = {data.dtype}")
             return data
 
         elif isinstance(key, list):
@@ -469,8 +444,7 @@ def load_hdf5(
                     f"Key(s) = {missing} not found. Available key(s) in this HDF5 file are {list_nested_keys(hf)}. "
                     "Tip: If you don't know the correct key, try 'key=None' to load the entire file as a dict."
                 )
-            if verbose:
-                print(f"Success! Loaded .hdf5 file as a dict with keys = {key} from path = '{file_path}'")
+
             return datasets_dict
 
         else:
@@ -478,7 +452,7 @@ def load_hdf5(
                 f"`key` must be None, a string, or a list of strings but got key = '{key}'"
             )
 
-def load_pt(file_path, weights_only=False, verbose: bool = True):
+def load_pt(file_path, weights_only=False):
     import torch
 
     # Check if the file exists
@@ -490,8 +464,7 @@ def load_pt(file_path, weights_only=False, verbose: bool = True):
     # https://dev-discuss.pytorch.org/t/bc-breaking-change-torch-load-is-being-flipped-to-use-weights-only-true-by-default-in-the-nightlies-after-137602/2573
     # Because PtyRAD .pt isn't a true PyTorch model, so `weights_only=True` would break this critical loading function.
     # However, `weights_only=False` has potential risk if the .pt file contains malicious code, so please only use this `load_pt` for PtyRAD-generated .pt file.
-    if verbose:
-        print("Success! Loaded .pt file path =", file_path)
+
     return data
 
 def load_ptyrad(file_path: str, verbose: bool = True) -> Dict[str, Any]:

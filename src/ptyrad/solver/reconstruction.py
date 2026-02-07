@@ -10,7 +10,8 @@ import numpy as np
 import torch
 
 from ptyrad.io.adapter import ndarrays_to_tensors
-from ptyrad.io.save import copy_params_to_dir, make_output_folder, safe_filename, save_results
+from ptyrad.io.save import make_output_folder, safe_filename, save_results
+from ptyrad.params.parser import copy_params_to_dir
 from ptyrad.utils.common import set_random_seed
 from ptyrad.utils.grouping import (
     remap_batches_to_global,
@@ -20,7 +21,8 @@ from ptyrad.utils.grouping import (
 from ptyrad.utils.image_proc import get_blob_size
 from ptyrad.utils.logging import vprint
 from ptyrad.utils.timing import parse_sec_to_time_str, time_sync
-from ptyrad.visualization import plot_pos_grouping, plot_summary
+from ptyrad.visualization.basic import plot_pos_grouping
+from ptyrad.visualization.model import plot_summary
 
 # This suppresses the '..._inductor/compile_fx.py:236: UserWarning: TensorFloat32 tensor cores for float32 matrix multiplication available but not enabled. 
 # Consider setting `torch.set_float32_matmul_precision('high')` for better performance.'
@@ -141,7 +143,7 @@ def prepare_recon(model, init, params):
     positions.
 
     Args:
-        model (PtychoAD): The ptychographic model containing the object, probe, 
+        model (PtychoModel): The ptychographic model containing the object, probe, 
             probe positions, and other relevant parameters.
         init (Initializer): The initializer object containing the initialized variables 
             needed for reconstruction.
@@ -194,7 +196,7 @@ def prepare_recon(model, init, params):
         fig_grouping.savefig(safe_filename(output_path + "/summary_pos_grouping.png"))
         if copy_params and not if_hypertune:
             # Save params.yml to separate reconstruction folder for normal mode. Hypertune mode params copying is handled at hypertune()
-            copy_params_to_dir(params_path, output_path, params, verbose=verbose)
+            copy_params_to_dir(params_path, output_path, params)
     else:
         output_path = None
     
@@ -339,7 +341,7 @@ def recon_loop(model, init, params, optimizer, loss_fn, constraint_fn, indices, 
     Intermediate results are saved at specified intervals, and a summary is plotted.
 
     Args:
-        model (PtychoAD): The ptychographic model containing the parameters and variables 
+        model (PtychoModel): The ptychographic model containing the parameters and variables 
             to be optimized.
         init (Initializer): The initializer object containing the initialized variables 
             needed for reconstruction.
@@ -420,7 +422,7 @@ def recon_step(batches, grad_accumulation, model, optimizer, loss_fn, constraint
     Args:
         batches (list of numpy.ndarray): List of batches where each batch contains indices 
             grouped according to the selected grouping mode.
-        model (PtychoAD): The ptychographic model containing the parameters and variables 
+        model (PtychoModel): The ptychographic model containing the parameters and variables 
             to be optimized.
         optimizer (torch.optim.Optimizer): The optimizer used to update the model parameters.
         loss_fn (CombinedLoss): The loss function object used to compute the loss for each batch.

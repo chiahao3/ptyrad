@@ -15,7 +15,7 @@ from ptyrad.utils.image_proc import imshift_batch
 from ptyrad.utils.logging import vprint
 from ptyrad.utils.math_ops import torch_phasor
 
-from .forward import multislice_forward_model_vec_all
+from ptyrad.core.forward import multislice_forward
 
 # The obj_ROI_grid is modified from precalculation to on-the-fly generation for memory consumption
 # It has very little performance impact but saves lots of memory for large 4D-STEM data
@@ -30,7 +30,7 @@ from .forward import multislice_forward_model_vec_all
 # Note that it's possible to reduce the peak-memory consumption by reducing the level of vectorizaiton and roll back to for loops
 # Lastly, the forward pass of this model would output the dp_fwd (N, Ky, Kx) and objp_patches (N, omode, Nz, Ny, Nx) in float32 for later loss calculation
 
-class PtychoAD(torch.nn.Module):
+class PtychoModel(torch.nn.Module):
     """
     Main optimization class for ptychographic reconstruction using automatic differentiation (AD).
 
@@ -71,10 +71,10 @@ class PtychoAD(torch.nn.Module):
     """
 
     def __init__(self, init_variables, model_params, device='cuda', verbose=True):
-        super(PtychoAD, self).__init__()
+        super(PtychoModel, self).__init__()
         with torch.no_grad():
             
-            vprint('### Initializing PtychoAD model ###', verbose=verbose)
+            vprint('### Initializing PtychoModel model ###', verbose=verbose)
             
             # Setup model behaviors
             self.device                 = device
@@ -155,7 +155,7 @@ class PtychoAD(torch.nn.Module):
             # Initialize iteration numbers that require torch.compile
             self.init_compilation_iters()
             
-            vprint('### Done initializing PtychoAD model ###', verbose=verbose)
+            vprint('### Done initializing PtychoModel model ###', verbose=verbose)
             vprint(' ', verbose=verbose)
             
     def get_complex_probe_view(self):
@@ -259,7 +259,7 @@ class PtychoAD(torch.nn.Module):
     def print_model_summary(self):
         """ Prints a summary of the model's optimizable variables and statistics. """
         # Set all the print as vprint so that it'll only print once in DDP, the actual `if verbose` is set outside of the function
-        vprint('### PtychoAD optimizable variables ###')
+        vprint('### PtychoModel optimizable variables ###')
         for name, tensor in self.optimizable_tensors.items():
             vprint(f"{name.ljust(16)}: {str(tensor.shape).ljust(32)}, {str(tensor.dtype).ljust(16)}, device:{tensor.device}, grad:{str(tensor.requires_grad).ljust(5)}, lr:{self.lr_params[name]:.0e}")
         total_var = sum(tensor.numel() for _, tensor in self.optimizable_tensors.items() if tensor.requires_grad)
@@ -403,7 +403,7 @@ class PtychoAD(torch.nn.Module):
     
     def get_forward_meas(self, object_patches, probes, propagators):
         
-        dp_fwd = multislice_forward_model_vec_all(object_patches, probes, propagators, omode_occu=self.omode_occu)
+        dp_fwd = multislice_forward(object_patches, probes, propagators, omode_occu=self.omode_occu)
         
         if self.detector_blur_std is not None and self.detector_blur_std != 0:
             kernel_size = max(5, 2*round(3*self.detector_blur_std)+1) # Kernel size would have minimum 5, and scale with 6sigma+1

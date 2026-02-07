@@ -491,7 +491,7 @@ def fit_background(image, mask, fit_type='exp'):
     
     return popt
 
-# This is only called inside `models.py / PtychoAD`
+# This is only called inside `models.py / PtychoModel`
 def imshift_batch(img, shifts, grid):
     """
     Generates a batch of shifted images from a single input image (..., Ny,Nx) with arbitray leading dimensions.

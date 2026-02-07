@@ -10,14 +10,15 @@ import numpy as np
 import torch.distributed as dist
 from torch.utils.data import DataLoader
 
-from ptyrad.core import CombinedConstraint, CombinedLoss, PtychoAD
-from ptyrad.hypertune import create_optuna_pruner, create_optuna_sampler, optuna_objective
-from ptyrad.initialization import Initializer
+from ptyrad.core import CombinedConstraint, CombinedLoss, PtychoModel
+from ptyrad.init import Initializer
 from ptyrad.io.dataloader import IndicesDataset
-from ptyrad.io.save import copy_params_to_dir
-from ptyrad.reconstruction import create_optimizer, prepare_recon, recon_loop
+from ptyrad.params.parser import copy_params_to_dir
 from ptyrad.utils.logging import vprint
 from ptyrad.utils.timing import get_time, parse_sec_to_time_str, time_sync
+
+from .hypertune import create_optuna_pruner, create_optuna_sampler, optuna_objective
+from .reconstruction import create_optimizer, prepare_recon, recon_loop
 
 
 class PtyRADSolver(object):
@@ -99,7 +100,7 @@ class PtyRADSolver(object):
         logger = self.logger
         
         # Create the model and optimizer, prepare indices, batches, and output_path
-        model         = PtychoAD(self.init.init_variables, params['model_params'], device=device, verbose=self.verbose)
+        model         = PtychoModel(self.init.init_variables, params['model_params'], device=device, verbose=self.verbose)
         optimizer     = create_optimizer(model.optimizer_params, model.optimizable_params)
         indices, batches, output_path = prepare_recon(model, self.init, params)
         
@@ -203,7 +204,7 @@ class PtyRADSolver(object):
         self.params['recon_params']['postfix'] = ''
         
         if copy_params:
-            copy_params_to_dir(params_path, output_dir, self.params)
+            copy_params_to_dir(params_path, output_dir)
 
         # Set output_dir to None if the user doesn't want to create the output_dir at all
         if not copy_params and self.params['recon_params']['SAVE_ITERS'] is None and not hypertune_params['collate_results']:

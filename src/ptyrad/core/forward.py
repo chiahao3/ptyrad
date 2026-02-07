@@ -17,7 +17,7 @@ from ptyrad.utils.math_ops import fftshift2
 # Note that element-wise multiplication of tensor (*) is defaulted as out-of-place operation
 # So new tensor is being created and referenced to the old graph to keep the gradient flowing
 
-def multislice_forward_model_vec_all(object_patches, probe, H, omode_occu=None, eps=1e-10):
+def multislice_forward(object_patches, probe, H, omode_occu=None, eps=1e-10):
     """
     Computes the multislice electron diffraction pattern with multiple incoherent probe 
     and object modes using a vectorized forward model.

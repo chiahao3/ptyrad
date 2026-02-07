@@ -1,6 +1,6 @@
 # model_params
 
-`model_params` determines the forward model behavior, the optimizer configuration, and the learning of the PyTorch model (PtychoAD)
+`model_params` determines the forward model behavior, the optimizer configuration, and the learning of the PyTorch model (PtychoModel)
 optimizer configurations are specified in 'optimizer_params', see https://pytorch.org/docs/stable/optim.html for detailed information of available optimizers and configs.
 update behaviors of optimizable variables (tensors) are specified in 'update_params'.
 'start_iter' specifies the iteration at which the variables (tensors) can start being updated by automatic differentiation (AD)
