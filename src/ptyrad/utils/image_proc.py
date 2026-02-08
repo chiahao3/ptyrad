@@ -8,8 +8,9 @@ import torch
 from scipy.optimize import minimize
 from torch.fft import fft2, fftfreq, ifft2
 
-from .common import vprint
-from .math_ops import fftshift2, ifftshift2, make_gaussian_mask, torch_phasor
+from ptyrad.runtime.logging import vprint
+
+from .math_ops import make_gaussian_mask, torch_phasor
 
 
 # Some quick estimation analysis tools

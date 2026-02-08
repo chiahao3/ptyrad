@@ -14,7 +14,7 @@ from ptyrad.core import CombinedConstraint, CombinedLoss, PtychoModel
 from ptyrad.init import Initializer
 from ptyrad.io.dataloader import IndicesDataset
 from ptyrad.params.parser import copy_params_to_dir
-from ptyrad.utils.logging import vprint
+from ptyrad.runtime.logging import vprint
 from ptyrad.utils.timing import get_time, parse_sec_to_time_str, time_sync
 
 from .hypertune import create_optuna_pruner, create_optuna_sampler, optuna_objective

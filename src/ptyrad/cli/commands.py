@@ -23,10 +23,14 @@ def get_examples(args):
 
 def run(args):
     import sys
+
+    from ptyrad.io.hierarchy import get_nested
     from ptyrad.params import load_params
+    from ptyrad.runtime.device import set_accelerator, set_gpu_device
+    from ptyrad.runtime.diagnostics import print_system_info
+    from ptyrad.runtime.logging import CustomLogger
+    from ptyrad.runtime.seed import resolve_seed_priority
     from ptyrad.solver import PtyRADSolver
-    from ptyrad.utils.logging import CustomLogger, print_system_info
-    from ptyrad.utils.common import get_nested, resolve_seed_priority, set_accelerator, set_gpu_device
     
     # Prefer positional, fallback to flag
     params_path = args.config_path or args.params_path
@@ -60,17 +64,17 @@ def run(args):
     ptycho_solver.run()
 
 def check_gpu(args):
-    from ptyrad.utils.logging import print_gpu_info
+    from ptyrad.runtime.diagnostics import print_gpu_info
     print_gpu_info()
 
 def print_info(args):
-    from ptyrad.utils.logging import print_system_info
+    from ptyrad.runtime.diagnostics import print_system_info
     print_system_info()
 
 def export_meas(args):
     from pathlib import Path
 
-    from ptyrad.initialization.initialization import Initializer
+    from ptyrad.init import Initializer
     from ptyrad.params import load_params
     
     # 1. Load init_params

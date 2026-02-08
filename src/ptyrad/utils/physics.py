@@ -10,7 +10,7 @@ import torch
 from numpy.fft import fft2, fftfreq, fftshift, ifft2, ifftshift
 
 from ptyrad.optics.aberrations import Aberrations
-from .common import vprint
+from ptyrad.runtime.logging import vprint
 
 
 def infer_dx_from_params(

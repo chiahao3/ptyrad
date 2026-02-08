@@ -8,7 +8,7 @@ import numpy as np
 import torch
 
 from ptyrad.io.save import safe_filename
-from ptyrad.utils.logging import vprint
+from ptyrad.runtime.logging import vprint
 
 from .basic import (
     plot_loss_curves,

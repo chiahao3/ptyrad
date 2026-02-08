@@ -12,14 +12,14 @@ import torch
 from ptyrad.io.adapter import ndarrays_to_tensors
 from ptyrad.io.save import make_output_folder, safe_filename, save_results
 from ptyrad.params.parser import copy_params_to_dir
-from ptyrad.utils.common import set_random_seed
+from ptyrad.runtime.logging import vprint
+from ptyrad.runtime.seed import set_random_seed
 from ptyrad.utils.grouping import (
     remap_batches_to_global,
     sparse_sampler_fps,
     sparse_sampler_hilbert,
 )
 from ptyrad.utils.image_proc import get_blob_size
-from ptyrad.utils.logging import vprint
 from ptyrad.utils.timing import parse_sec_to_time_str, time_sync
 from ptyrad.visualization.basic import plot_pos_grouping
 from ptyrad.visualization.model import plot_summary

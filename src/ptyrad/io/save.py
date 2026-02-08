@@ -11,77 +11,10 @@ import numpy as np
 import torch
 from tifffile import imwrite
 
-from ptyrad.utils.timing import get_time
-from ptyrad.utils.logging import vprint
+from ptyrad.runtime.logging import vprint
 from ptyrad.utils.image_proc import normalize_by_bit_depth
 from ptyrad.utils.provenance import generate_provenance_json, save_provenance_to_hdf5
-
-###### These are data saving functions ######
-
-def write_tif(file_path, data):
-    """
-    Save an array as a TIFF file.
-    """
-    imwrite(file_path, data, imagej=True)
-    vprint(f"Success! Saved data to .tif file: {file_path}")
-
-def write_npy(file_path, data):
-    """
-    Save an array as a NumPy .npy file.
-    """
-    np.save(file_path, data)
-    vprint(f"Success! Saved data to .npy file: {file_path}")
-
-def write_hdf5(file_path, data, dataset_name="meas", **kwargs):
-    """
-    Save an array as an HDF5 file.
-    """
-    with h5py.File(file_path, "w") as hf: # 'w' will override if the file already exists
-        hf.create_dataset(dataset_name, data=data, compression="gzip", **kwargs)
-    vprint(f"Success! Saved data as '{dataset_name}' to .hdf5 file: {file_path}")
-
-def save_array(data, file_dir='', file_name='ptyrad_init_meas', file_format="hdf5", output_shape=None, append_shape=True, **kwargs):
-    """
-    Save an ND array to the specified file format.
-
-    Args:
-        data (numpy.ndarray): ND array to save.
-        file_dir (str): Directory to save the file.
-        file_name (str): Base name of the file (without extension).
-        file_format (str): File format to save as ("tif", "npy", "hdf5", "mat").
-        output_shape (tuple, optional): Desired shape for the output array.
-        append_shape (bool): Whether to append the array shape to the filename.
-        **kwargs: Additional arguments for specific file formats.
-    """
-    # Reshape data if output_ndim is specified
-    if output_shape is not None:
-        try:
-            data = data.reshape(output_shape)
-        except ValueError as e:
-            vprint(f"WARNING: {e}, the data shape is preserved as {data.shape}")
-            
-    # Append shape to the filename if enabled
-    if append_shape:
-        shape_str = "_".join(map(str, data.shape))
-        file_name = f"{file_name}_{shape_str}"
-
-    # Construct the full file path
-    file_format = file_format.lower()
-    file_path = os.path.join(file_dir, f"{file_name}.{file_format}")
-    vprint(f"Saving array with shape = {data.shape} and dtype = {data.dtype}")
-    
-    if os.path.isfile(file_path):
-        vprint(f"file path = '{file_path}' already exists, the file will be overwritten.")
-    
-    if file_format in ["tif", "tiff"]:
-        write_tif(file_path, data)
-    elif file_format == "npy":
-        write_npy(file_path, data)
-    elif file_format in ["hdf5", "h5", "mat"]:
-        # Saving .mat into hdf5 as if it were .mat v7.3. This ensures compatibility with py4DGUI.
-        write_hdf5(file_path, data, **kwargs)
-    else:
-        raise ValueError(f"Unsupported file format: {file_format}")
+from ptyrad.utils.timing import get_time
     
 ###### These are results saving functions ######
 
