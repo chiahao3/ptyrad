@@ -22,8 +22,8 @@
       - object
       - position
       - propagator
-    - init
-      - initializer (**TODO**)
+  - init
+    - initializer (**TODO**)
   - io
   - optics (**TODO**, especially need to coordinate with math, physics, image_proc on their levels)
   - params
@@ -45,6 +45,6 @@
     - physics
     - provenance
     - timing
-  - visualization
+  - plotting
     - basic
     - model

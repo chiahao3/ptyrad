@@ -21,8 +21,8 @@ from ptyrad.utils.grouping import (
 )
 from ptyrad.utils.image_proc import get_blob_size
 from ptyrad.utils.timing import parse_sec_to_time_str, time_sync
-from ptyrad.visualization.basic import plot_pos_grouping
-from ptyrad.visualization.model import plot_summary
+from ptyrad.plotting.basic import plot_pos_grouping
+from ptyrad.plotting.model import plot_summary
 
 # This suppresses the '..._inductor/compile_fx.py:236: UserWarning: TensorFloat32 tensor cores for float32 matrix multiplication available but not enabled. 
 # Consider setting `torch.set_float32_matmul_precision('high')` for better performance.'
