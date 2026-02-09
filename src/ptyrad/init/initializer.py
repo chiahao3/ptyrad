@@ -38,7 +38,7 @@ from ptyrad.utils.physics import (
     orthogonalize_modes_vec_np,
     sort_by_mode_int_np,
 )
-from ptyrad.utils.provenance import collect_provenance
+from ptyrad.io.provenance import collect_provenance
 
 
 class Initializer:

@@ -15,10 +15,10 @@ from ptyrad.init import Initializer
 from ptyrad.io.dataloader import IndicesDataset
 from ptyrad.params.parser import copy_params_to_dir
 from ptyrad.runtime.logging import vprint
-from ptyrad.utils.timing import get_time, parse_sec_to_time_str, time_sync
+from ptyrad.utils.time import get_time, parse_sec_to_time_str
 
 from .hypertune import create_optuna_pruner, create_optuna_sampler, optuna_objective
-from .reconstruction import create_optimizer, prepare_recon, recon_loop
+from .reconstruction import create_optimizer, prepare_recon, recon_loop, time_sync
 
 
 class PtyRADSolver(object):

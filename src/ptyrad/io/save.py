@@ -13,8 +13,8 @@ from tifffile import imwrite
 
 from ptyrad.runtime.logging import vprint
 from ptyrad.utils.image_proc import normalize_by_bit_depth
-from ptyrad.utils.provenance import generate_provenance_json, save_provenance_to_hdf5
-from ptyrad.utils.timing import get_time
+from ptyrad.io.provenance import generate_provenance_json, save_provenance_to_hdf5
+from ptyrad.utils.time import get_time
     
 ###### These are results saving functions ######
 

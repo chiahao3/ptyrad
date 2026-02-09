@@ -6,7 +6,7 @@ import warnings
 import torch
 import torch.distributed as dist
 
-from ptyrad.utils.timing import get_time
+from ptyrad.utils.time import get_time
 
 
 @torch.compiler.disable

@@ -14,13 +14,13 @@ from ptyrad.io.save import make_output_folder, safe_filename, save_results
 from ptyrad.params.parser import copy_params_to_dir
 from ptyrad.runtime.logging import vprint
 from ptyrad.runtime.seed import set_random_seed
-from ptyrad.utils.grouping import (
+from ptyrad.solver.grouping import (
     remap_batches_to_global,
     sparse_sampler_fps,
     sparse_sampler_hilbert,
 )
 from ptyrad.utils.image_proc import get_blob_size
-from ptyrad.utils.timing import parse_sec_to_time_str, time_sync
+from ptyrad.utils.time import parse_sec_to_time_str
 from ptyrad.plotting.basic import plot_pos_grouping
 from ptyrad.plotting.model import plot_summary
 
@@ -121,7 +121,7 @@ def create_optimizer(optimizer_params, optimizable_params, verbose=True):
     
     if ptyrad_path is not None and isinstance(ptyrad_path, str):
         try:
-            from ptyrad.load import load_ptyrad
+            from ptyrad.io.load import load_ptyrad
             optim_state_dict = load_ptyrad(ptyrad_path)['optim_state_dict']
             optim_state_dict = _fix_optimizer_state_dict_format(optim_state_dict)
             # Convert 'state' to tensors on the right device, while 'param_groups' are kept as generic scalars/arrays/boolean/None/list of int
@@ -536,6 +536,25 @@ def recon_step(batches, grad_accumulation, model, optimizer, loss_fn, constraint
 # ==============================================================================
 #  SECTION 3: HELPERS
 # ==============================================================================
+
+@torch.compiler.disable
+def time_sync():
+    # PyTorch doesn't have a direct exposed API to check the selected default device 
+    # so we'll be checking these .is_available() just to prevent error.
+    # Luckily these checks won't really affect the performance.
+    
+    from time import perf_counter
+    
+    # Check if CUDA is available
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+    # Check if MPS (Metal Performance Shaders) is available (macOS only)
+    elif torch.backends.mps.is_available():
+        torch.mps.synchronize()
+    
+    # Measure the time
+    t = perf_counter()
+    return t
 
 def parse_torch_compile_configs(configs):
     """

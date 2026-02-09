@@ -1,5 +1,3 @@
-import torch
-from time import perf_counter
 from typing import Union
 
 def get_time(time_format: Union[bool, str, None] = 'date') -> str:
@@ -43,23 +41,6 @@ def get_time(time_format: Union[bool, str, None] = 'date') -> str:
             return date.today().strftime(fmt)
     except ValueError as e:
         raise ValueError(f"Invalid time format string: {fmt!r}") from e
-
-@torch.compiler.disable
-def time_sync():
-    # PyTorch doesn't have a direct exposed API to check the selected default device 
-    # so we'll be checking these .is_available() just to prevent error.
-    # Luckily these checks won't really affect the performance.
-    
-    # Check if CUDA is available
-    if torch.cuda.is_available():
-        torch.cuda.synchronize()
-    # Check if MPS (Metal Performance Shaders) is available (macOS only)
-    elif torch.backends.mps.is_available():
-        torch.mps.synchronize()
-    
-    # Measure the time
-    t = perf_counter()
-    return t
 
 def parse_sec_to_time_str(seconds):
     days = seconds // 86400
