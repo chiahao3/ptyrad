@@ -8,7 +8,6 @@ import os
 from collections import defaultdict
 
 import numpy as np
-import torch
 
 
 def print_package_tree(package_path):
@@ -83,6 +82,8 @@ def has_nan_or_inf(tensor):
     Returns:
         bool: True if the tensor contains any NaN or Inf values, False otherwise.
     """
+    import torch
+    
     # Check for NaN values
     has_nan = torch.isnan(tensor).any()
 
@@ -92,6 +93,7 @@ def has_nan_or_inf(tensor):
     return has_nan or has_inf
 
 def get_size_bytes(x):
+    import torch
     
     print(f"Input tensor has shape {x.shape}, dtype {x.dtype}, and live on {x.device}")
     size_bytes = torch.numel(x) * x.element_size()
@@ -115,6 +117,8 @@ def check_modes_ortho(tensor, atol = 2e-4):
     # Therefore, instead of torch.dot(a,a), which would output un-intended result when a is complex,
     # use torch.dot(a, a.conj()) for the correct inner product.
     
+    import torch
+    
     # Automatically convert numpy array to torch tensor
     if isinstance(tensor, np.ndarray):
         print("Casting input tensor from 'np.ndarray' to 'torch.tensor'")
@@ -130,24 +134,6 @@ def check_modes_ortho(tensor, atol = 2e-4):
             else:
                 print(f"Modes {i} and {j} are not orthogonal with abs(dot) = {dot_product.abs().detach().cpu().numpy()}")
 
-def yaml2json(input_filepath, output_filepath):
-    import json
-
-    import yaml
-    with open(input_filepath, 'r') as file:
-        try:
-            # Load as YAML
-            data = yaml.safe_load(file)
-            
-            # Save to JSON
-            with open(output_filepath, 'w') as json_file:
-                json.dump(data, json_file, indent=4)
-                
-            print(f"YAML {input_filepath} has been successfully converted and saved to JSON {output_filepath}")
-
-        except yaml.YAMLError as e:
-            print("Error parsing YAML file:", e)
-
 # Testing functions
 def test_loss_fn(model, indices, loss_fn):
     """ Print loss values for each term for convenient weight tuning """
@@ -155,6 +141,7 @@ def test_loss_fn(model, indices, loss_fn):
     # indices: array-like indices indicating which probe position to evaluate
     # measurements: 4D-STEM data that's already passed to DEVICE
     # loss_fn: loss function object created from CombinedLoss
+    import torch
     
     with torch.no_grad():
         model_CBEDs, objp_patches = model(indices)

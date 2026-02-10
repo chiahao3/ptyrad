@@ -827,7 +827,7 @@ class InitParams(BaseModel):
     
     ``sum(pmode_init_pows)`` must be 1 if ``len(pmode_init_pows) > 1``. 
 
-    See ``ptyrad.utils.physics.make_mixed_probe`` for more details
+    See ``ptyrad.optics.probe.make_mixed_probe`` for more details
     """
     
     obj_omode_max: int = Field(default=1, ge=1, description="Maximum number of mixed object modes")

@@ -10,35 +10,37 @@ so users can initialize their data with PtyRAD first and reconstruct with other 
 import os
 from copy import deepcopy
 from math import floor
+from typing import Optional
 
 import numpy as np
 from scipy.io.matlab import matfile_version as get_matfile_version
 from scipy.ndimage import gaussian_filter, zoom
 
+from ptyrad.core.functional import complex_object_z_resample_torch
 from ptyrad.io.handlers import load_array_from_file, save_array
 from ptyrad.io.hierarchy import get_nested, load_hdf5, load_mat
 from ptyrad.io.load import load_ptyrad
+from ptyrad.io.provenance import collect_provenance
+from ptyrad.optics.constants import get_wavelength_ang
+from ptyrad.optics.probe import (
+    make_fzp_probe,
+    make_mixed_probe,
+    make_stem_probe,
+    orthogonalize_modes_vec_np,
+    sort_by_mode_int_np,
+)
+from ptyrad.optics.propagator import near_field_evolution
 from ptyrad.runtime.logging import vprint
 from ptyrad.runtime.seed import set_random_seed
 from ptyrad.utils.image_proc import (
     create_one_hot_mask,
+    exponential_decay,
     fit_background,
     fit_cbed_pattern,
     guess_radius_of_bright_field_disk,
+    power_law,
 )
-from ptyrad.utils.math_ops import compose_affine_matrix, exponential_decay, power_law
-from ptyrad.utils.physics import (
-    complex_object_z_resample_torch,
-    get_EM_constants,
-    infer_dx_from_params,
-    make_fzp_probe,
-    make_mixed_probe,
-    make_stem_probe,
-    near_field_evolution,
-    orthogonalize_modes_vec_np,
-    sort_by_mode_int_np,
-)
-from ptyrad.io.provenance import collect_provenance
+from ptyrad.utils.affine import compose_affine_matrix
 
 
 class Initializer:
@@ -163,7 +165,7 @@ class Initializer:
         if illum_type == 'electron':
             # Get wavelength
             energy  = self.init_params.get('probe_kv') # kV
-            wavelength = get_EM_constants(energy, output_type='wavelength') # wavelength in Ang
+            wavelength = get_wavelength_ang(energy) # wavelength in Ang
             unit_str = 'Ang'
             
             # Run fitRBF routine for electron ptychography
@@ -179,9 +181,9 @@ class Initializer:
             
             # Actually calculating dx for each calib_mode
             if calib_mode == 'fitRBF':
-                dx = infer_dx_from_params(**{'RBF': fitRBF, 'Npix': Npix, 'wavelength': wavelength, 'conv_angle': conv_angle})
+                dx = Initializer._infer_dx_from_params(**{'RBF': fitRBF, 'Npix': Npix, 'wavelength': wavelength, 'conv_angle': conv_angle})
             else:
-                dx = infer_dx_from_params(**{calib_mode: calib_value, 'Npix': Npix, 'wavelength': wavelength, 'conv_angle': conv_angle})
+                dx = Initializer._infer_dx_from_params(**{calib_mode: calib_value, 'Npix': Npix, 'wavelength': wavelength, 'conv_angle': conv_angle})
                 if calib_mode != 'RBF': 
                     inferRBF = conv_angle / 1e3 * Npix * dx / wavelength # We can still infer RBF using the user provided calib value
                     vprint(f"Using init_params, the inferred RBF (conv_angle / 1e3 * Npix * dx / wavelength) = {inferRBF:.2f} px with Npix = {meas_raw_avg.shape[-1]}", verbose=self.verbose)
@@ -202,7 +204,7 @@ class Initializer:
             unit_str = 'm'
             
             # Infer dx calibration from provided values
-            dx = infer_dx_from_params(**{calib_mode: calib_value,
+            dx = Initializer._infer_dx_from_params(**{calib_mode: calib_value,
                                         'Npix': Npix,
                                         'wavelength': wavelength})
             
@@ -268,7 +270,7 @@ class Initializer:
         probe_illum_type = self.init_params.get('probe_illum_type') or 'electron'
         if  probe_illum_type == 'electron':
             voltage     = self.init_params['probe_kv']
-            wavelength  = get_EM_constants(voltage, output_type='wavelength')
+            wavelength  = get_wavelength_ang(voltage) # wavelength in Ang
             unit_str    = 'Ang'
             conv_angle  = self.init_params['probe_conv_angle']
             Npix        = self.init_params['meas_Npix']
@@ -1243,6 +1245,88 @@ class Initializer:
             
         save_array(meas, **export_params)
         return
+    
+    ###### Private methods for initializing calibration ######
+
+    @staticmethod
+    def _infer_dx_from_params(
+        dx: Optional[float] = None,
+        dk: Optional[float] = None,
+        kMax: Optional[float] = None,
+        da: Optional[float] = None,
+        angleMax: Optional[float] = None,
+        RBF: Optional[float] = None,
+        n_alpha: Optional[float] = None,
+        conv_angle: Optional[float] = None,
+        wavelength: Optional[float] = None,
+        Npix: Optional[int] = None,
+    ) -> float:
+        """
+        Infer the real-space pixel size (dx) based on available unit-related parameters.
+        Accepts keyword arguments directly, or a dictionary via `_infer_dx_from_params(**params)`.
+
+        Args:
+            dx (Optional[float], optional): Real space pixel size for object, probe, and scan position coordinates in unit of Ang (electron) or m (X-ray).
+                This is used as the unified unit for calibration. Defaults to None.
+                
+            dk (Optional[float], optional): k-space pixel size for the measurments in unit of 1/Ang (electron) or 1/m (X-ray). Defaults to None.
+            
+            kMax (Optional[float], optional): Maximum collection angle in unit of 1/Ang for electron, or 1/m for X-ray. Defaults to None.
+            
+            da (Optional[float], optional): k-space pixel size for the measurments in unit of mrad. Defaults to None.
+            
+            angleMax (Optional[float], optional): Maximum collection angle in unit of mrad. Defaults to None.
+            
+            RBF (Optional[float], optional): Number of pixels within the bright field disk of the electron diffraction pattern. Defaults to None.
+            
+            n_alpha (Optional[float], optional): Collection angle in unit of convergence angles of the elctron probe (usually called "n-alpha"). Defaults to None.
+            
+            conv_angle (Optional[float], optional): Convergence angles of the electron probe. Unit: Ang. Defaults to None.
+            
+            wavelength (Optional[float], optional): Wavelength of the wave. Unit should be Ang (electron) or m (X-ray). Defaults to None.
+            
+            Npix (Optional[int], optional): Number of detector pixel. Defaults to None.
+
+        Raises:
+            ValueError: if required parameters are missing or input is ambiguous
+
+        Returns:
+            float: inferred dx (real-space pixel size)
+        """    
+
+        if dx is not None:
+            return dx
+
+        if dk is not None and Npix is not None:
+            return 1 / (Npix * dk)
+
+        if kMax is not None:
+            return 1 / (2 * kMax)
+
+        if da is not None and wavelength is not None and Npix is not None:
+            dk = da / wavelength / 1e3  # mrad to rad
+            return 1 / (Npix * dk)
+
+        if angleMax is not None and wavelength is not None:
+            kMax = angleMax / wavelength / 1e3  # mrad to rad
+            return 1 / (2 * kMax)
+
+        if all(v is not None for v in (RBF, conv_angle, wavelength, Npix)):
+            da = conv_angle / RBF / 1e3  # radians
+            dk = da / wavelength
+            return 1 / (Npix * dk)
+
+        if n_alpha is not None and wavelength is not None:
+            angleMax = n_alpha * conv_angle
+            kMax = angleMax / wavelength / 1e3  # mrad to rad
+            return 1 / (2 * kMax)
+        
+        raise ValueError(
+            "Insufficient or unrecognized parameters to infer dx. "
+            "Please provide one of the following: "
+            "'dx', or 'dk'+'Npix', or 'da'+'wavelength'+'Npix', or 'kMax', or "
+            "'aMax'+'wavelength', or 'RBF'+'conv_angle'+'wavelength'+'Npix'."
+        )
             
     ###### Private methods for initializing probe ######
         

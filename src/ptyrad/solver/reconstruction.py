@@ -12,6 +12,8 @@ import torch
 from ptyrad.io.adapter import ndarrays_to_tensors
 from ptyrad.io.save import make_output_folder, safe_filename, save_results
 from ptyrad.params.parser import copy_params_to_dir
+from ptyrad.plotting.basic import plot_pos_grouping
+from ptyrad.plotting.model import plot_summary
 from ptyrad.runtime.logging import vprint
 from ptyrad.runtime.seed import set_random_seed
 from ptyrad.solver.grouping import (
@@ -21,8 +23,6 @@ from ptyrad.solver.grouping import (
 )
 from ptyrad.utils.image_proc import get_blob_size
 from ptyrad.utils.time import parse_sec_to_time_str
-from ptyrad.plotting.basic import plot_pos_grouping
-from ptyrad.plotting.model import plot_summary
 
 # This suppresses the '..._inductor/compile_fx.py:236: UserWarning: TensorFloat32 tensor cores for float32 matrix multiplication available but not enabled. 
 # Consider setting `torch.set_float32_matmul_precision('high')` for better performance.'

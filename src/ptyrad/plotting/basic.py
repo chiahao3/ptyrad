@@ -8,13 +8,13 @@ import matplotlib.ticker as ticker
 import numpy as np
 from numpy.fft import fft2, fftshift, ifftshift
 
-from ptyrad.utils.math_ops import make_sigmoid_mask
-
 
 def plot_sigmoid_mask(Npix, relative_radius, relative_width, img=None, show_circles=False):
     """ Plot a sigmoid mask overlay on img with a line profile """
     # Note that relative_radius ranges from 0 - 1 for center -> edge. radius = 1 corresponds to a inscribed circle
     # While relative_width also ranges from 0 - 1 for Npix * relative_width. width = 0.05 corresponds to a width of 5% of the image width would have sigmoid value change from 0 - 1
+    from ptyrad.core.functional import make_sigmoid_mask # This is used in constraints so will pull torch during execution
+    
     mask = make_sigmoid_mask(Npix, relative_radius, relative_width).detach().cpu().numpy()
     img = np.ones((Npix,Npix)) if img is None else img/img.max()
     masked_img = mask * img
@@ -162,7 +162,7 @@ def plot_scan_positions(pos, init_pos=None, img=None, offset=None, figsize=(16,1
         return fig, ax
     
 def plot_affine_transformation(scale, asymmetry, rotation, shear):
-    from .utils import compose_affine_matrix
+    from ptyrad.utils.affine import compose_affine_matrix
     # Example
     # plot_affine_transformation(2,0,45,0)
     A = np.eye(2)

@@ -8,17 +8,17 @@ from torch.fft import fft2, fftfreq, fftn, ifft2, ifftn
 from torch.nn.functional import interpolate
 from torchvision.transforms.functional import gaussian_blur
 
-from ptyrad.runtime.logging import vprint
-from ptyrad.utils.image_proc import gaussian_blur_1d
-from ptyrad.utils.math_ops import (
+from ptyrad.core.functional import (
     approx_torch_quantile,
     dct_2d,
     fftshift2,
+    gaussian_blur_1d,
     idct_2d,
     ifftshift2,
     make_sigmoid_mask,
+    near_field_evolution_torch,
 )
-from ptyrad.utils.physics import near_field_evolution_torch
+from ptyrad.runtime.logging import vprint
 
 
 @torch.compiler.disable # TorchRuntimeError: Dynamo failed to run FX node with fake tensors: call_function <Wrapped method <original sub>>(*(FakeTensor(..., size=(5,), dtype=torch.float64), 2.0), **{}): got AttributeError("'ndarray' object has no attribute 'sub'")

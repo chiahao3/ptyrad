@@ -11,10 +11,9 @@ from torch.fft import fft2, ifft2
 from torchvision.transforms.functional import gaussian_blur
 
 from ptyrad.core.forward import multislice_forward
+from ptyrad.core.functional import imshift_batch, torch_phasor
 from ptyrad.io.dataloader import MeasDataLoader
 from ptyrad.runtime.logging import vprint
-from ptyrad.utils.image_proc import imshift_batch
-from ptyrad.utils.math_ops import torch_phasor
 
 # The obj_ROI_grid is modified from precalculation to on-the-fly generation for memory consumption
 # It has very little performance impact but saves lots of memory for large 4D-STEM data

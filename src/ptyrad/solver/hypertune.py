@@ -13,9 +13,9 @@ from ptyrad.core import PtychoModel
 from ptyrad.core.losses import get_objp_contrast
 from ptyrad.io.save import save_results
 from ptyrad.optics.aberrations import Aberrations
+from ptyrad.plotting.model import plot_summary
 from ptyrad.runtime.logging import vprint
 from ptyrad.runtime.seed import set_random_seed
-from ptyrad.plotting.model import plot_summary
 
 from .reconstruction import (
     create_optimizer,

@@ -232,3 +232,21 @@ def copy_params_to_dir(params_path, output_dir, params=None):
     else:
         # If neither a file nor params are provided, skip with a warning
         return
+    
+def yaml2json(input_filepath, output_filepath):
+    import json
+
+    import yaml
+    with open(input_filepath, 'r') as file:
+        try:
+            # Load as YAML
+            data = yaml.safe_load(file)
+            
+            # Save to JSON
+            with open(output_filepath, 'w') as json_file:
+                json.dump(data, json_file, indent=4)
+                
+            print(f"YAML {input_filepath} has been successfully converted and saved to JSON {output_filepath}")
+
+        except yaml.YAMLError as e:
+            print("Error parsing YAML file:", e)
