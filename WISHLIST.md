@@ -1,13 +1,24 @@
 # New Features and Enhancements
 
 
-Last Update: 2025.09.30
+Last Update: 2026.02.13
 
 ---
 
 ### User Interface
 
 - Consider a GUI for easier operation
+
+### Logging
+
+- Rebuild `logger` logic and improve `vprint`
+  - Don't use vprint on everything
+  - Peripheral functions should be silent, do the logging only inside the solver context
+  - Would need to canocalize the logger usage, if possible, split the rank logic with logger, and only decorate the logger if needed
+
+### Simulator
+
+- Maybe add a namespace sub-package for torch-based 4D-STEM simulation
 
 ### Overall workflows
 
@@ -19,14 +30,12 @@ Last Update: 2025.09.30
 
 ### Initialization
 
+- Split `initializer.py` into smaller modules, it's almost 2000 lines now
 - Add padding and resampling to loaded object, probe, and position altogether as `recon_resampling`
 - Add object initialization methods
     - [autocorrelation](https://doi.org/10.1364/OPTICA.522380)
     - Wirtinger Flow spectral method
     - tcBF?
-- Add totoal probe intensity so we can better normalize the measurement with respect to the probe intensity
-    - This should help estimate the amplitude term with total intensity variation
-- Add MeasMask (WIP) to exclude bad pixels on detector from loss calculation and updates
 
 ### Forward
 
@@ -35,10 +44,10 @@ Last Update: 2025.09.30
 
 ### Models
 
+- Split `ptycho_model.py` into smaller modules for probe.py, obj.py, pos.py, propagator.py
 - Revisit the `Npix-simu` branch about allowing forward model to generate diffraction patterns with larger kMax than the actual data. We can either center-crop the forward diffraction pattern before calculating the loss, or add a mask to exclude gradients from the additional region.
     - This would require the object and probe to be initialized at higher real space sampling than the data kMax, but it will allow the forward model to properly scatter outside of the collected region on the detector, hence reduce the edge artifact. This is a better approach than padding the experimental diffraction pattern.
     - Although early attempts seem to suggest the extra k region were not constraint by data at all so it creates weird artifact in the k-space probe. Would need to regularize probe to supress that.
-- Add an option to use `DataLoader` for measurements. This would be a bit slower than directly loading entire measurements into memory, but it allows dataset larger than memory, and also makes DDP on multiple GPUs easier
 - Add optimizable param of forward model CBED shift correction for k-space misalignment with data
     - Should probably just do that right before applying detector blur inside the model forward method
     - We can make it similar to crystal tilt that has options of “fixed”, “global”, or “each”
@@ -77,13 +86,6 @@ Last Update: 2025.09.30
         - Need to think about how to incorporate this with mixed state probe. It might be better to leave some probe modes un-constrained just like `probe_mask_k` use the accumulated power
     - Fix the probe corner intensity artifact. Feel like some intrinsic phase instability of complex probe
     - Add an active decoupling between probe and object to avoid probe absorbing too much object structure. Could be a deconvolution in either space. Should look into how PtyShv update the probe closer, and maybe implement an illumination-normalized constraint, or just a full option of conventional analytical grad update for probe
-- Object
-    - Support L0 regularization
-        - The l0 regularizer is essentially doing a denoising by thresholding the object spectrum in k-space, makes sense, let's see how it does when I get a bit more time
-            - https://arxiv.org/pdf/2411.14915
-    - Constrain the intensity flowing into vacuum layer
-        - Mask the gradient with hook, or we can apply vacuum sigmoid constraint at each iteration
-    - Active recenter the object along z with center of mass and propagate the probe accordingly to solve the defocus / object depth ambiguity
 - Position
     - Try [iCGD](https://github.com/ningustc/iCGD) for their position constrain
 

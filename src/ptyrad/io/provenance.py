@@ -88,7 +88,7 @@ def collect_provenance(init_params):
                     else:
                         # Legacy PtyRAD File: Enhance the Genesis Entry
                         # Extract version and params
-                        ckpt = load_ptyrad(abs_path, verbose=False)
+                        ckpt = load_ptyrad(abs_path)
                         ver = ckpt.get('ptyrad_version')
                         legacy_params = ckpt.get('params')
 

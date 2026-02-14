@@ -7,9 +7,9 @@ import os
 from typing import Any, Dict
 
 from .adapter import tensors_to_ndarrays
+import warnings
 
-
-def load_ptyrad(file_path: str, verbose: bool = True) -> Dict[str, Any]:
+def load_ptyrad(file_path: str) -> Dict[str, Any]:
     """
     Load PtyRAD reconstruction files based on their file extension.
 
@@ -19,7 +19,6 @@ def load_ptyrad(file_path: str, verbose: bool = True) -> Dict[str, Any]:
 
     Args:
         file_path (str): Path to the file to be loaded.
-        verbose (bool): Flag to print verbose messages, default is True.
 
     Returns:
         Any: The loaded data, typically as a numpy array or dictionary, depending on the file type.
@@ -49,14 +48,17 @@ def load_ptyrad(file_path: str, verbose: bool = True) -> Dict[str, Any]:
 
     if ext in [".h5", ".hdf5"]:
         from ptyrad.io.hierarchy import load_hdf5
-        return load_hdf5(file_path, verbose=verbose)
+        return load_hdf5(file_path)
 
     elif ext == ".pt":
         from ptyrad.io.hierarchy import load_pt
-        if verbose:
-            print("WARNING: Loading PtyRAD reconstruction from .pt file is deprecated and will likely be removed by 2025 Aug.")
-            print("INFO: PtyRAD reconstruction output has been using .hdf5 format since v0.1.0b7.")
-        return tensors_to_ndarrays(load_pt(file_path, verbose=verbose)) # .pt is supported for backward compatibility before 0.1.0b7. (e.g. PtyRAD reconstructions used for the paper)
+        warnings.warn(
+            "Loading PtyRAD reconstruction from .pt file is deprecated and will likely be removed by 2025 Aug."
+            "PtyRAD reconstruction output has been using .hdf5 format since v0.1.0b7.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return tensors_to_ndarrays(load_pt(file_path)) # .pt is supported for backward compatibility before 0.1.0b7. (e.g. PtyRAD reconstructions used for the paper)
     
     else:
         raise ValueError(

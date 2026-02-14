@@ -1,6 +1,10 @@
 # Directories that don't need to backup
 __pycache__
 *.sqlite3
+data/
+output/
+params/
+
 # setuptools build artifacts
 build/
 dist/
