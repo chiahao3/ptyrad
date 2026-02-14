@@ -1,6 +1,9 @@
+import logging
 import subprocess
 
-from .logging import vprint
+from ptyrad.runtime.logging import report
+
+logger = logging.getLogger(__name__)
 
 
 def is_mig_enabled():
@@ -45,14 +48,14 @@ def print_system_info():
     import platform
     import sys
     
-    vprint("### System information ###")
+    report("### System information ###")
     
     # Operating system information
-    vprint(f"Platform: {platform.platform()}")
-    vprint(f"Operating System: {platform.system()} {platform.release()}")
-    vprint(f"OS Version: {platform.version()}")
-    vprint(f"Machine: {platform.machine()}")
-    vprint(f"Processor: {platform.processor()}")
+    report(f"Platform: {platform.platform()}")
+    report(f"Operating System: {platform.system()} {platform.release()}")
+    report(f"OS Version: {platform.version()}")
+    report(f"Machine: {platform.machine()}")
+    report(f"Processor: {platform.processor()}")
     
     # CPU cores
     if 'SLURM_JOB_CPUS_PER_NODE' in os.environ:
@@ -60,84 +63,84 @@ def print_system_info():
     else:
         # Fallback to the total number of CPU cores on the node
         cpus = os.cpu_count()
-    vprint(f"Available CPU cores: {cpus}")
+    report(f"Available CPU cores: {cpus}")
     
     # Memory information
     if 'SLURM_MEM_PER_NODE' in os.environ:
         # Memory allocated per node by SLURM (in MB)
         mem_total = int(os.environ['SLURM_MEM_PER_NODE']) / 1024  # Convert MB to GB
-        vprint(f"SLURM-Allocated Total Memory: {mem_total:.2f} GB")
+        report(f"SLURM-Allocated Total Memory: {mem_total:.2f} GB")
     elif 'SLURM_MEM_PER_CPU' in os.environ:
         # Memory allocated per CPU by SLURM (in MB)
         mem_total = int(os.environ['SLURM_MEM_PER_CPU']) * cpus / 1024  # Convert MB to GB
-        vprint(f"SLURM-Allocated Total Memory: {mem_total:.2f} GB")
+        report(f"SLURM-Allocated Total Memory: {mem_total:.2f} GB")
     else:
         try:
             import psutil
             # Fallback to system memory information
             mem = psutil.virtual_memory()
-            vprint(f"Total Memory: {mem.total / (1024 ** 3):.2f} GB")
-            vprint(f"Available Memory: {mem.available / (1024 ** 3):.2f} GB")
+            report(f"Total Memory: {mem.total / (1024 ** 3):.2f} GB")
+            report(f"Available Memory: {mem.available / (1024 ** 3):.2f} GB")
         except ImportError:
-            vprint("Memory information will be available after `conda install conda-forge::psutil`")
-    vprint(" ")
+            report("Memory information will be available after `conda install conda-forge::psutil`")
+    report(" ")
             
     # GPU information
     print_gpu_info()
-    vprint(" ")
+    report(" ")
     
     # Python version and executable
-    vprint("### Python information ###")
-    vprint(f"Python Executable: {sys.executable}")
-    vprint(f"Python Version: {sys.version}")
-    vprint(" ")
+    report("### Python information ###")
+    report(f"Python Executable: {sys.executable}")
+    report(f"Python Version: {sys.version}")
+    report(" ")
     
     # Packages information (numpy, PyTorch, Optuna, Accelerate, PtyRAD)
     print_packages_info()
-    vprint(" ")
+    report(" ")
 
 def print_gpu_info():
-    vprint("### GPU information ###")
+    report("### GPU information ###")
     try:
         import torch
         if torch.backends.cuda.is_built() and torch.cuda.is_available():
-            vprint(f"CUDA Available: {torch.cuda.is_available()}")
-            vprint(f"CUDA Version: {torch.version.cuda}")
-            vprint(f"Available CUDA GPUs: {[torch.cuda.get_device_name(d) for d in range(torch.cuda.device_count())]}")
-            vprint(f"CUDA Compute Capability: {[f'{major}.{minor}' for (major, minor) in [torch.cuda.get_device_capability(d) for d in range(torch.cuda.device_count())]]}")
-            vprint("  INFO: For torch.compile with Triton, you'll need CUDA GPU with Compute Capability >= 7.0.")
-            vprint("        In addition, Triton does not directly support Windows.")
-            vprint("        For Windows users, please follow the instruction and download `triton-windows` from https://github.com/woct0rdho/triton-windows.")
-            vprint(f"MIG (Multi-Instance GPU) mode = {is_mig_enabled()}")
-            vprint("  INFO: MIG splits a physical GPU into multiple GPU slices, but multiGPU does not support these MIG slices.")
-            vprint("        In addition, multiGPU is currently only available on Linux due to the limited NCCL support.")
-            vprint("      -> If you're doing normal reconstruction/hypertune, you can safely ignore this.")
-            vprint("      -> If you want to do multiGPU, you must provide multiple 'full' GPUs that are not in MIG mode.")
+            report(f"CUDA Available: {torch.cuda.is_available()}")
+            report(f"CUDA Version: {torch.version.cuda}")
+            report(f"Available CUDA GPUs: {[torch.cuda.get_device_name(d) for d in range(torch.cuda.device_count())]}")
+            report(f"CUDA Compute Capability: {[f'{major}.{minor}' for (major, minor) in [torch.cuda.get_device_capability(d) for d in range(torch.cuda.device_count())]]}")
+            report("  INFO: For torch.compile with Triton, you'll need CUDA GPU with Compute Capability >= 7.0.")
+            report("        In addition, Triton does not directly support Windows.")
+            report("        For Windows users, please follow the instruction and download `triton-windows` from https://github.com/woct0rdho/triton-windows.")
+            report(f"MIG (Multi-Instance GPU) mode = {is_mig_enabled()}")
+            report("  INFO: MIG splits a physical GPU into multiple GPU slices, but multiGPU does not support these MIG slices.")
+            report("        In addition, multiGPU is currently only available on Linux due to the limited NCCL support.")
+            report("      -> If you're doing normal reconstruction/hypertune, you can safely ignore this.")
+            report("      -> If you want to do multiGPU, you must provide multiple 'full' GPUs that are not in MIG mode.")
         elif torch.backends.mps.is_built() and torch.backends.mps.is_available():
-            vprint(f"MPS Available: {torch.backends.mps.is_available()}")
+            report(f"MPS Available: {torch.backends.mps.is_available()}")
         elif torch.backends.cuda.is_built() or torch.backends.mps.is_built():
-            vprint("WARNING: GPU support built with PyTorch, but could not find any existing / compatible GPU device.")
-            vprint("         PtyRAD will fall back to CPU which is much slower in performance")
-            vprint("         -> If you're using a CPU-only machine, you can safely ignore this.")
-            vprint("         -> If you believe you *do* have a GPU, please check the compatibility:")
-            vprint("           - Are the correct NVIDIA drivers installed?")
-            vprint("           - Is your CUDA runtime version compatible with PyTorch?")
-            vprint("           Tips: Run `nvidia-smi` in your terminal for NVIDIA driver and CUDA runtime information.")
-            vprint("           Tips: Run `conda list torch` in your terminal (with `ptyrad` environment activated) to check the installed PyTorch version.")
+            report("WARNING: GPU support built with PyTorch, but could not find any existing / compatible GPU device.")
+            report("         PtyRAD will fall back to CPU which is much slower in performance")
+            report("         -> If you're using a CPU-only machine, you can safely ignore this.")
+            report("         -> If you believe you *do* have a GPU, please check the compatibility:")
+            report("           - Are the correct NVIDIA drivers installed?")
+            report("           - Is your CUDA runtime version compatible with PyTorch?")
+            report("           Tips: Run `nvidia-smi` in your terminal for NVIDIA driver and CUDA runtime information.")
+            report("           Tips: Run `conda list torch` in your terminal (with `ptyrad` environment activated) to check the installed PyTorch version.")
         else:
-            vprint("WARNING: No GPU backend (CUDA or MPS) built into this PyTorch install.")
-            vprint("         PtyRAD will fall back to CPU which is much slower in performance")
-            vprint("         Please consider reinstalling PyTorch with GPU support if available.")
-            vprint("         See https://github.com/chiahao3/ptyrad for PtyRAD installation guide.")
+            report("WARNING: No GPU backend (CUDA or MPS) built into this PyTorch install.")
+            report("         PtyRAD will fall back to CPU which is much slower in performance")
+            report("         Please consider reinstalling PyTorch with GPU support if available.")
+            report("         See https://github.com/chiahao3/ptyrad for PtyRAD installation guide.")
     except ImportError:
-        vprint("WARNING: No GPU information because PyTorch can't be imported.")
-        vprint("         Please install PyTorch because it's the crucial dependency of PtyRAD.")
-        vprint("         See https://github.com/chiahao3/ptyrad for PtyRAD installation guide.")
+        report("WARNING: No GPU information because PyTorch can't be imported.")
+        report("         Please install PyTorch because it's the crucial dependency of PtyRAD.")
+        report("         See https://github.com/chiahao3/ptyrad for PtyRAD installation guide.")
     
 def print_packages_info():
     import importlib
     import importlib.metadata
-    vprint("### Packages information ###")
+    report("### Packages information ###")
     
     # Print package versions
     packages = [
@@ -152,11 +155,11 @@ def print_packages_info():
         try:
             # Try to get the version from package metadata (installed version)
             version = importlib.metadata.version(module_name)
-            vprint(f"{display_name} Version (metadata): {version}")
+            report(f"{display_name} Version (metadata): {version}")
         except importlib.metadata.PackageNotFoundError:
-            vprint(f"{display_name} not found in the environment.")
+            report(f"{display_name} not found in the environment.")
         except Exception as e:
-            vprint(f"Error retrieving version for {display_name}: {e}")
+            report(f"Error retrieving version for {display_name}: {e}")
     
     # Check the version and path of the used PtyRAD package
     # In general:
@@ -177,20 +180,20 @@ def print_packages_info():
         module = importlib.import_module('ptyrad')
         runtime_version = module.__version__
         metadata_version = importlib.metadata.version("ptyrad")
-        vprint(f"PtyRAD Version (ptyrad/__init__.py): {runtime_version}")
-        vprint(f"PtyRAD is located at: {module.__file__}") # For editable install this will be in package src/, while full install would make a copy at site-packages/
+        report(f"PtyRAD Version (ptyrad/__init__.py): {runtime_version}")
+        report(f"PtyRAD is located at: {module.__file__}") # For editable install this will be in package src/, while full install would make a copy at site-packages/
         
         if runtime_version and metadata_version and runtime_version != metadata_version:
-            vprint("WARNING: Version mismatch detected!")
-            vprint(f"  Runtime version : {runtime_version} (retrieved from current source file: ptyrad/__init__.py)")
-            vprint(f"  Metadata version: {metadata_version} (recorded during previous `pip/conda install`)")
-            vprint("  This likely means you downloaded new codes from repo but forgot to update the installed metadata.")
-            vprint("  This does not affect the code execution because the runtime version of code is always used, but this can lead to misleading version logs.")
-            vprint("  To fix this, re-run: `pip install -e . --no-deps` at the package root directory.")
+            report("WARNING: Version mismatch detected!")
+            report(f"  Runtime version : {runtime_version} (retrieved from current source file: ptyrad/__init__.py)")
+            report(f"  Metadata version: {metadata_version} (recorded during previous `pip/conda install`)")
+            report("  This likely means you downloaded new codes from repo but forgot to update the installed metadata.")
+            report("  This does not affect the code execution because the runtime version of code is always used, but this can lead to misleading version logs.")
+            report("  To fix this, re-run: `pip install -e . --no-deps` at the package root directory.")
         
     except ImportError:
-        vprint("PtyRAD not found locally")
+        report("PtyRAD not found locally")
     except AttributeError:
-        vprint("PtyRAD imported, but no __version__ attribute found.")
+        report("PtyRAD imported, but no __version__ attribute found.")
     except Exception as e:
-        vprint(f"Error retrieving version for PtyRAD: {e}")
+        report(f"Error retrieving version for PtyRAD: {e}")

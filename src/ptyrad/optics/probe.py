@@ -1,3 +1,4 @@
+import logging
 from typing import Dict, Literal, Tuple, Union
 
 import numpy as np
@@ -5,8 +6,8 @@ from numpy.fft import fft2, fftfreq, fftshift, ifft2, ifftshift
 
 from ptyrad.optics.aberrations import Aberrations
 from ptyrad.optics.constants import get_wavelength_ang
-from ptyrad.runtime.logging import vprint # TODO: Remove the heavy torch-related vprint once we have a more modern logging
 
+logger = logging.getLogger(__name__)
 
 # Initialize probes
 def make_aberration_surface_krivanek_polar(
@@ -203,7 +204,6 @@ def make_stem_probe(
     dx: float, 
     aberrations: Union[dict, Aberrations], 
     method: Literal['polar', 'cartesian', 'complex'] = 'cartesian', 
-    verbose: bool = True
 ) -> np.ndarray:
     """Simulates a STEM probe in real space using the specified methods for chi(k) calculations.
     The three methods (polar, cartesian, complex) give identical result within numerical precision, 
@@ -226,7 +226,6 @@ def make_stem_probe(
             - 'polar': Standard Krivanek polar form (C_nm * alpha^(n+1) * cos[m(phi-phi_nm)]).
             - 'cartesian': Recursive Cartesian polynomials (C_nma * X[m] + C_nmb * Y[m]).
             - 'complex': Analytic complex power series (C_nm * w*^(n+1-s) * w^s).
-        verbose: If True, prints simulation details to stdout.
 
     Returns:
         np.ndarray: A 2D complex array representing the probe wave function in 
@@ -250,21 +249,20 @@ def make_stem_probe(
     kR = np.sqrt(kX**2+kY**2)
     mask = (kR<=k_aperture)
     
-    # Verbose printing
-    if verbose:
-        vprint("Start simulating STEM probe")
-        vprint(f'  kv          = {kv} kV')    
-        vprint(f'  wavelength  = {wavelength:.4f} Ang')
-        vprint(f'  conv_angle  = {conv_angle} mrad')
-        vprint(f'  Npix        = {Npix} px')
-        vprint(f'  dk          = {dk:.4f} Ang^-1')
-        vprint(f'  kMax        = {(Npix*dk/2):.4f} Ang^-1')
-        vprint(f'  alpha_max   = {(Npix*dk/2*wavelength*1000):.4f} mrad')
-        vprint(f'  dx          = {dx:.4f} Ang, Nyquist-limited dmin = 2*dx = {2*dx:.4f} Ang')
-        vprint(f'  Rayleigh-limited resolution  = {(0.61*wavelength/conv_angle*1e3):.4f} Ang (0.61*lambda/alpha for focused probe )')
-        vprint(f'  Real space probe extent = {dx*Npix:.4f} Ang')
-        for line in ab.pretty_print().splitlines():
-            vprint(line)
+    # Info printing
+    logger.info("Start simulating STEM probe")
+    logger.info(f'  kv          = {kv} kV')    
+    logger.info(f'  wavelength  = {wavelength:.4f} Ang')
+    logger.info(f'  conv_angle  = {conv_angle} mrad')
+    logger.info(f'  Npix        = {Npix} px')
+    logger.info(f'  dk          = {dk:.4f} Ang^-1')
+    logger.info(f'  kMax        = {(Npix*dk/2):.4f} Ang^-1')
+    logger.info(f'  alpha_max   = {(Npix*dk/2*wavelength*1000):.4f} mrad')
+    logger.info(f'  dx          = {dx:.4f} Ang, Nyquist-limited dmin = 2*dx = {2*dx:.4f} Ang')
+    logger.info(f'  Rayleigh-limited resolution  = {(0.61*wavelength/conv_angle*1e3):.4f} Ang (0.61*lambda/alpha for focused probe )')
+    logger.info(f'  Real space probe extent = {dx*Npix:.4f} Ang')
+    for line in ab.pretty_print().splitlines():
+        logger.info(line)
 
     # Choosing the computation method used for chi calculation
     if method == 'polar':
@@ -299,7 +297,6 @@ def make_fzp_probe(
     dRn: float,
     D_FZP: float,
     D_H: float,
-    verbose=True
 ) -> np.ndarray:
     """
     Generates a Fresnel zone plate probe with internal Fresnel propagation for x-ray ptychography simulations.
@@ -321,7 +318,7 @@ def make_fzp_probe(
     lambda_ = 1.23984193e-9 / beam_kev # lambda_: m; energy: keV
     fl = 2 * Rn * dRn / lambda_  # focal length corresponding to central wavelength
 
-    vprint("Start simulating FZP probe", verbose=verbose)
+    logger.info("Start simulating FZP probe")
 
     dx_fzp = lambda_ * fl / Npix / dx  # pixel size in the FZP plane
 
@@ -367,7 +364,7 @@ def make_fzp_probe(
 
     return probe
 
-def make_mixed_probe(probe, pmodes, pmode_init_pows, verbose=True):
+def make_mixed_probe(probe, pmodes, pmode_init_pows):
     ''' Make a mixed state probe from a single state probe '''
     # Input:
     #   probe: (Ny,Nx) complex array
@@ -377,7 +374,7 @@ def make_mixed_probe(probe, pmodes, pmode_init_pows, verbose=True):
     #   mixed_probe: A mixed state probe with (pmode,Ny,Nx)
        
     # Prepare a mixed-state probe `mixed_probe`
-    vprint(f"Start making mixed-state STEM probe with {pmodes} incoherent probe modes", verbose=verbose)
+    logger.info(f"Start making mixed-state STEM probe with {pmodes} incoherent probe modes")
     M = np.ceil(pmodes**0.5)-1
     N = np.ceil(pmodes/(M+1))-1
     mixed_probe = hermite_like(probe, M,N)[:pmodes]
@@ -395,7 +392,7 @@ def make_mixed_probe(probe, pmodes, pmode_init_pows, verbose=True):
         pmode_pows[0] = 1-sum(pmode_pows)
 
     mixed_probe = mixed_probe * np.sqrt(pmode_pows)[:,None,None]
-    vprint(f"Relative power of probe modes = {pmode_pows}", verbose=verbose)
+    logger.info(f"Relative power of probe modes = {pmode_pows}")
     return mixed_probe
 
 def hermite_like(fundam, M, N):

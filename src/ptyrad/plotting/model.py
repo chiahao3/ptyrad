@@ -3,12 +3,13 @@ Plotting functions related to PyTorch models
 """
 # This isolates the heavy torch import (3-6 sec) and is not promoted via __init__
 
+import logging
+
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
 from ptyrad.io.save import safe_filename
-from ptyrad.runtime.logging import vprint
 
 from .basic import (
     plot_loss_curves,
@@ -19,9 +20,10 @@ from .basic import (
     plot_slice_thickness,
 )
 
+logger = logging.getLogger(__name__)
 
 @torch.compiler.disable
-def plot_summary(output_path, model, niter, indices, init_variables, selected_figs=['loss', 'forward', 'probe_r_amp', 'probe_k_amp', 'probe_k_phase', 'pos'], collate_str='', show_fig=True, save_fig=False, verbose=True):
+def plot_summary(output_path, model, niter, indices, init_variables, selected_figs=['loss', 'forward', 'probe_r_amp', 'probe_k_amp', 'probe_k_phase', 'pos'], collate_str='', show_fig=True, save_fig=False):
     """ Wrapper function for most visualization function """
     # selected_figs can take 'loss', 'forward', 'probe_r_amp', 'probe_k_amp', 'probe_k_phase', 'pos', 'tilt', or 'all'
     # Note: Set show_fig=False and save_fig=True if you just want to save the figure without showing
@@ -30,8 +32,8 @@ def plot_summary(output_path, model, niter, indices, init_variables, selected_fi
     if show_fig is False and save_fig is False:
         save_fig = True 
         
-    if save_fig and verbose:
-        vprint(f"Saving summary figures for iter {niter}")
+    if save_fig:
+        logger.info(f"Saving summary figures for iter {niter}")
     
     iter_str = '_iter' + str(niter).zfill(4)
     

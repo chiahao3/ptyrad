@@ -3,6 +3,7 @@ Saving functions for PtyRAD outputs including model, arrays, params files, etc.
 
 """
 
+import logging
 import os
 from typing import Any, Dict
 
@@ -11,11 +12,12 @@ import numpy as np
 import torch
 from tifffile import imwrite
 
-from ptyrad.runtime.logging import vprint
-from ptyrad.utils.image_proc import normalize_by_bit_depth
 from ptyrad.io.provenance import generate_provenance_json, save_provenance_to_hdf5
+from ptyrad.utils.image_proc import normalize_by_bit_depth
 from ptyrad.utils.time import get_time
-    
+
+logger = logging.getLogger(__name__)
+
 ###### These are results saving functions ######
 
 def expand_presets(input_list, presets):
@@ -27,7 +29,7 @@ def expand_presets(input_list, presets):
             expanded.append(tag)
     return list(dict.fromkeys(expanded))  # Removes duplicates, keeps order
 
-def safe_filename(filepath, verbose=False):
+def safe_filename(filepath):
     """
     Ensures a filepath is safe across platforms by:
     1. Converting relative paths to absolute
@@ -37,7 +39,6 @@ def safe_filename(filepath, verbose=False):
     
     Args:
         filepath: The original filepath to make safe
-        verbose: Whether to print messages about corrections (default: False)
     
     Returns:
         A modified filepath that should work across platforms
@@ -113,10 +114,10 @@ def safe_filename(filepath, verbose=False):
             result_path = "\\\\?\\" + os.path.abspath(result_path)
     
     # Provide feedback if corrections were made
-    if changes_made and verbose:
-        print("Path corrected for compatibility:")
-        print(f"  Original: {original_path}")
-        print(f"  Corrected: {result_path}")
+    if changes_made:
+        logger.info("Path corrected for compatibility:")
+        logger.info(f"  Original: {original_path}")
+        logger.info(f"  Corrected: {result_path}")
     
     return result_path
 
@@ -280,7 +281,6 @@ def make_output_folder(
     constraint_params,
     loss_params,
     recon_dir_affixes=["default"],
-    verbose=True,
 ):
     """
     Generate the output folder name based on reconstruction parameters, model attributes, constraints, and loss settings.
@@ -294,7 +294,6 @@ def make_output_folder(
         constraint_params (dict): Constraints applied during reconstruction, such as filters and smoothing.
         loss_params (dict): Loss parameters used in the reconstruction process.
         recon_dir_affixes (list): List of tags or presets to include in the folder name. Defaults to ["default"].
-        verbose (bool): Whether to print verbose messages during folder creation. Defaults to True.
 
     Returns:
         str: Path to the generated output folder.
@@ -319,9 +318,9 @@ def make_output_folder(
     
     # Process recon_dir_affixes to expand presets
     if any(tag in recon_dir_presets for tag in recon_dir_affixes):
-        vprint(f"Original recon_dir_affixes = {recon_dir_affixes}", verbose=verbose)
+        logger.info(f"Original recon_dir_affixes = {recon_dir_affixes}")
         recon_dir_affixes = expand_presets(recon_dir_affixes, recon_dir_presets)
-        vprint(f"Expanded recon_dir_affixes = {recon_dir_affixes}", verbose=verbose)
+        logger.info(f"Expanded recon_dir_affixes = {recon_dir_affixes}")
     
     # Attach time string if prefix_time is true or non-empty str
     if prefix_time is True or (isinstance(prefix_time, str) and prefix_time):
@@ -558,7 +557,7 @@ def make_output_folder(
     output_path = os.path.join(output_dir, "_".join(parts)) if parts else output_dir
     output_path = safe_filename(output_path)
     os.makedirs(output_path, exist_ok=True)
-    vprint(f"output_path = '{output_path}' is generated!", verbose=verbose)
+    logger.info(f"output_path = '{output_path}' is generated!")
     return output_path
 
 @torch.compiler.disable

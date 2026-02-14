@@ -7,6 +7,7 @@ so users can initialize their data with PtyRAD first and reconstruct with other 
 
 """
 
+import logging
 import os
 from copy import deepcopy
 from math import floor
@@ -30,7 +31,6 @@ from ptyrad.optics.probe import (
     sort_by_mode_int_np,
 )
 from ptyrad.optics.propagator import near_field_evolution
-from ptyrad.runtime.logging import vprint
 from ptyrad.runtime.seed import set_random_seed
 from ptyrad.utils.image_proc import (
     create_one_hot_mask,
@@ -42,9 +42,10 @@ from ptyrad.utils.image_proc import (
 )
 from ptyrad.utils.affine import compose_affine_matrix
 
+logger = logging.getLogger(__name__)
 
 class Initializer:
-    def __init__(self, init_params, seed=None, verbose=True):
+    def __init__(self, init_params, seed=None):
         
         # A deepcopy creates a new object so modifying self.init_params won't affect the original init_params dict that was outside the class
         # This is important because self.init_params might get updated if there's cropping, padding, or resampling of the measurements
@@ -55,17 +56,16 @@ class Initializer:
         self.init_params_original = deepcopy(init_params)
         self.init_variables = {'random_seed': seed} # This dict stores all the variables that will be used for the later ptychography reconstruction
         self.random_seed = seed
-        self.verbose=verbose
         self.print_init_params()
     
     ##### Public methods for initializing everything #####
     def print_init_params(self):
         ''' Print the current init_params in the Initialzier object '''
         
-        vprint("init_params are displayed below:", verbose=self.verbose)
+        logger.info("init_params are displayed below:")
         for key, value in self.init_params.items():
-            vprint(f"  {key}: {value}", verbose=self.verbose)
-        vprint(" ", verbose=self.verbose)
+            logger.info(f"  {key}: {value}")
+        logger.info(" ")
 
     def init_cache(self):
         """ Check if the source paths are the same, if so, we may cache that field to reduce file loading time """
@@ -75,7 +75,7 @@ class Initializer:
         # With 2 file source posibilities, the self.cache_contents is either caching from 'PtyRAD' or 'PtyShv'
         # Even we add more file type supports in the future (py4dstem or ptypy), the cache would still be a single file type
         
-        vprint("### Initializing cache ###", verbose=self.verbose)
+        logger.info("### Initializing cache ###")
         
         # Initialize flags for cached fields
         self.cache_source = None
@@ -92,25 +92,25 @@ class Initializer:
         # Set cache_contents
         if any([self.use_cached_obj, self.use_cached_probe, self.use_cached_pos]):
             if self.cache_source == 'PtyRAD':
-                vprint(f"Loading 'PtyRAD' file from {self.cache_path} for caching", verbose=self.verbose)
+                logger.info(f"Loading 'PtyRAD' file from {self.cache_path} for caching")
                 self.cache_contents = load_ptyrad(self.cache_path)
             elif self.cache_source == 'PtyShv':
-                vprint(f"Loading 'PtyShv' file from {self.cache_path} for caching", verbose=self.verbose)
+                logger.info(f"Loading 'PtyShv' file from {self.cache_path} for caching")
                 self.cache_contents = load_mat(self.cache_path, key=['object', 'probe', 'outputs.probe_positions'], delimiter='.') # flattend dict with key using delimiter
             elif self.cache_source == 'py4DSTEM':
-                vprint(f"Loading 'py4DSTEM' file from {self.cache_path} for caching", verbose=self.verbose)
+                logger.info(f"Loading 'py4DSTEM' file from {self.cache_path} for caching")
                 self.cache_contents = load_hdf5(self.cache_path, key=None)
             else:
                 raise ValueError(f"File type {source} not implemented for caching yet, please use 'PtyRAD', or 'PtyShv'!")
             
         # Cache is only used when 2 out of 3 fields have the same source and path, so the following flags could only be all false, 1 false 2 true, or 3 true.
-        vprint(f"use_cached_obj   = {self.use_cached_obj}", verbose=self.verbose)
-        vprint(f"use_cached_probe = {self.use_cached_probe}", verbose=self.verbose)
-        vprint(f"use_cached_pos   = {self.use_cached_pos}", verbose=self.verbose)
-        vprint(" ", verbose=self.verbose)
+        logger.info(f"use_cached_obj   = {self.use_cached_obj}")
+        logger.info(f"use_cached_probe = {self.use_cached_probe}")
+        logger.info(f"use_cached_pos   = {self.use_cached_pos}")
+        logger.info(" ")
         
     def init_measurements(self):
-        vprint("### Initializing measurements ###", verbose=self.verbose)
+        logger.info("### Initializing measurements ###")
 
         meas = self._load_meas()
         meas = self._process_meas(meas)
@@ -122,7 +122,7 @@ class Initializer:
         if pad_mode == 'on_the_fly':
             padded = self.init_variables.get('on_the_fly_meas_padded')
             padded_int_sum = padded.sum() if padded is not None else 0
-            vprint(f"Adjusting `meas_total_ints` by adding {padded_int_sum:.4f} for on_the_fly meas padding", verbose=self.verbose)
+            logger.info(f"Adjusting `meas_total_ints` by adding {padded_int_sum:.4f} for on_the_fly meas padding")
             meas_total_ints += padded_int_sum # meas_total_ints is used to normalize the probe intensity. 
             # Because the meas could gain intensity during on_the_fly padding, 
             # we need to consider the extra intensity from the padded region here. 
@@ -133,17 +133,17 @@ class Initializer:
         
         export_params = self.init_params.get('meas_export') # Ture, False, None, dict (could be {})
         if export_params is True or isinstance(export_params, dict):
-            vprint(f"Exporting measurements with `meas_export` = {export_params}")
+            logger.info(f"Exporting measurements with `meas_export` = {export_params}")
             self._export_meas(export_params if isinstance(export_params, dict) else {})
         
         # Print out some measurements statistics
-        vprint(f"Pattern total int. statistics (min, mean, max)        = ({meas_total_ints.min():.4f}, {meas_total_ints.mean():.4f}, {meas_total_ints.max():.4f}), with min/max = {(meas_total_ints.min()/meas_total_ints.max()):.1%}", verbose=self.verbose)
-        vprint(f"Global meausrements int. statistics (min, mean, max)  = ({meas.min():.4f}, {meas.mean():.4f}, {meas.max():.4f})", verbose=self.verbose)
-        vprint(f"measurements                              (N, Ky, Kx) = {meas.dtype}, {meas.shape}", verbose=self.verbose)
-        vprint(" ", verbose=self.verbose)
+        logger.info(f"Pattern total int. statistics (min, mean, max)        = ({meas_total_ints.min():.4f}, {meas_total_ints.mean():.4f}, {meas_total_ints.max():.4f}), with min/max = {(meas_total_ints.min()/meas_total_ints.max()):.1%}")
+        logger.info(f"Global meausrements int. statistics (min, mean, max)  = ({meas.min():.4f}, {meas.mean():.4f}, {meas.max():.4f})")
+        logger.info(f"measurements                              (N, Ky, Kx) = {meas.dtype}, {meas.shape}")
+        logger.info(" ")
 
     def init_calibration(self):
-        vprint("### Setting up calibration ###", verbose=self.verbose)
+        logger.info("### Setting up calibration ###")
 
         calib_dict  = self.init_params['meas_calibration']
         calib_mode  = calib_dict['mode'] # One of 'dx', 'dk', 'kMax', 'da', 'angleMax', 'RBF', 'n_alpha', or 'fitRBF'
@@ -151,14 +151,14 @@ class Initializer:
         Npix        = self.init_params_original.get('meas_Npix') # Load the original Npix because init_params['meas_Npix'] could have been modified in init_measurements
         conv_angle  = self.init_params.get('probe_conv_angle')
         illum_type  = self.init_params.get('probe_illum_type') or 'electron'
-        vprint(f"meas_calibration mode = '{calib_mode}', value = {calib_value}", verbose=self.verbose) # No need to add :.4f to value because it could be None, also it's user input so won't have too many digits
+        logger.info(f"meas_calibration mode = '{calib_mode}', value = {calib_value}") # No need to add :.4f to value because it could be None, also it's user input so won't have too many digits
         
         # Load the meas_raw_avg first to ensure measurement is initialized
         try: 
             meas_raw_avg = self.init_variables['meas_raw_avg'] # This is the averaged measurements with only simple permuting/reshaping/flipping
         except KeyError:
-            vprint("Warning: 'init_variables['meas_raw_avg]' not found. Initializing measurements first for calibration...", verbose=self.verbose)
-            vprint(" ", verbose=self.verbose)
+            logger.info("Warning: 'init_variables['meas_raw_avg]' not found. Initializing measurements first for calibration...")
+            logger.info(" ")
             self.init_measurements()
             meas_raw_avg = self.init_variables['meas_raw_avg']
         
@@ -169,15 +169,15 @@ class Initializer:
             unit_str = 'Ang'
             
             # Run fitRBF routine for electron ptychography
-            vprint("Using loaded raw averaged measurement (before crop/pad/resample) to fit RBF as a part of the meas calibration", verbose=self.verbose)
+            logger.info("Using loaded raw averaged measurement (before crop/pad/resample) to fit RBF as a part of the meas calibration")
             fitRBF = guess_radius_of_bright_field_disk(meas_raw_avg, thresh=calib_dict.get('thresh', 0.5))
             
-            vprint(f"Radius of fitted bright field disk (RBF) = {fitRBF:.2f} px with Npix = {meas_raw_avg.shape[-1]}", verbose=self.verbose)
-            vprint(f"Suggested probe_mask_k radius (RBF*2/Npix) > {(fitRBF * 2 / Npix):.4f}", verbose=self.verbose)
+            logger.info(f"Radius of fitted bright field disk (RBF) = {fitRBF:.2f} px with Npix = {meas_raw_avg.shape[-1]}")
+            logger.info(f"Suggested probe_mask_k radius (RBF*2/Npix) > {(fitRBF * 2 / Npix):.4f}")
             
-            vprint("Fitting raw averaged measurement with center, radius, and Gaussian blur std as a sanity check", verbose=self.verbose)
-            vprint("Note that the fitted Gaussian blur std (detector blur) would be affected by overlapping Bragg disks", verbose=self.verbose)
-            _ = fit_cbed_pattern(meas_raw_avg, verbose=self.verbose)
+            logger.info("Fitting raw averaged measurement with center, radius, and Gaussian blur std as a sanity check")
+            logger.info("Note that the fitted Gaussian blur std (detector blur) would be affected by overlapping Bragg disks")
+            _ = fit_cbed_pattern(meas_raw_avg)
             
             # Actually calculating dx for each calib_mode
             if calib_mode == 'fitRBF':
@@ -186,14 +186,14 @@ class Initializer:
                 dx = Initializer._infer_dx_from_params(**{calib_mode: calib_value, 'Npix': Npix, 'wavelength': wavelength, 'conv_angle': conv_angle})
                 if calib_mode != 'RBF': 
                     inferRBF = conv_angle / 1e3 * Npix * dx / wavelength # We can still infer RBF using the user provided calib value
-                    vprint(f"Using init_params, the inferred RBF (conv_angle / 1e3 * Npix * dx / wavelength) = {inferRBF:.2f} px with Npix = {meas_raw_avg.shape[-1]}", verbose=self.verbose)
+                    logger.info(f"Using init_params, the inferred RBF (conv_angle / 1e3 * Npix * dx / wavelength) = {inferRBF:.2f} px with Npix = {meas_raw_avg.shape[-1]}")
 
             if calib_mode in ['fitRBF', 'RBF']:
-                vprint("WARNING: The 'fitRBF' and 'RBF' calibration methods are highly dependent on the accuracy of user-provided experimental parameters and acquisition conditions,",verbose=self.verbose)
-                vprint("         including convergence angle, kV, dose, specimen thickness, and collection angle for the estimation of RBF.", verbose=self.verbose)
-                vprint("         For example, a 5-10% error in convergence angle is fairly common.", verbose=self.verbose)
-                vprint("         Users are strongly advised to perform proper microscope calibration to ensure accurate results.", verbose=self.verbose)
-                vprint("         These method should only be used as a rough estimate and not as a substitute for proper experimental calibration.", verbose=self.verbose)
+                logger.warning("The 'fitRBF' and 'RBF' calibration methods are highly dependent on the accuracy of user-provided experimental parameters and acquisition conditions,")
+                logger.warning("including convergence angle, kV, dose, specimen thickness, and collection angle for the estimation of RBF.")
+                logger.warning(r"For example, a 5-10% error in convergence angle is fairly common.")
+                logger.warning("Users are strongly advised to perform proper microscope calibration to ensure accurate results.")
+                logger.warning("These method should only be used as a rough estimate and not as a substitute for proper experimental calibration.")
                 
         elif illum_type == 'xray':
             if calib_mode in ['RBF', 'fitRBF', 'n_alpha']:
@@ -213,7 +213,7 @@ class Initializer:
         
         # Print the information
 
-        vprint(f"dx (real space pixel size of probe and object) set to {dx:.4f} {unit_str} with Npix = {meas_raw_avg.shape[-1]}", verbose=self.verbose)
+        logger.info(f"dx (real space pixel size of probe and object) set to {dx:.4f} {unit_str} with Npix = {meas_raw_avg.shape[-1]}")
         
         Npix_is_modified = False
         
@@ -226,9 +226,9 @@ class Initializer:
                 dx = dx * Npix / Npix_new
                 Npix_is_modified = True
                 Npix_modified = Npix_new
-                vprint(f"Update dx to {dx:.4f} {unit_str} due to meas_crop, Npix = {Npix_modified}", verbose=self.verbose)
+                logger.info(f"Update dx to {dx:.4f} {unit_str} due to meas_crop, Npix = {Npix_modified}")
                 if illum_type == 'electron':
-                    vprint(f"Suggested probe_mask_k radius (RBF*2/Npix) changes to > {(fitRBF * 2 / Npix_modified):.4f}", verbose=self.verbose)
+                    logger.info(f"Suggested probe_mask_k radius (RBF*2/Npix) changes to > {(fitRBF * 2 / Npix_modified):.4f}")
         
         # Handle additional changes to dx if there's meas_pad
         pad_cfg = self.init_params.get('meas_pad')
@@ -239,9 +239,9 @@ class Initializer:
             if Npix_is_modified:
                 Npix = Npix_modified
             dx = dx * Npix / target_Npix
-            vprint(f"Update dx to {dx:.4f} {unit_str} due to meas_pad (mode = {mode}, padding_type = {padding_type}), Npix = {target_Npix}", verbose=self.verbose)
+            logger.info(f"Update dx to {dx:.4f} {unit_str} due to meas_pad (mode = {mode}, padding_type = {padding_type}), Npix = {target_Npix}")
             if illum_type == 'electron':
-                vprint(f"Suggested probe_mask_k radius (RBF*2/Npix) changes to > {(fitRBF * 2 / target_Npix):.4f}", verbose=self.verbose)
+                logger.info(f"Suggested probe_mask_k radius (RBF*2/Npix) changes to > {(fitRBF * 2 / target_Npix):.4f}")
 
         # Handle additional change to fitRBF if there's meas_resample
         resample_cfg = self.init_params.get('meas_resample')
@@ -250,16 +250,16 @@ class Initializer:
             scale_factors = resample_cfg['scale_factors']
             fitRBF_modified = fitRBF * scale_factors[0] # Currently the 2 values need to be the same
             final_Npix = self.init_params['meas_Npix']
-            vprint(f"Update fitRBF to {fitRBF_modified:.4f} due to meas_resample (mode = {mode}, scale_factors = {scale_factors}), Npix = {final_Npix}", verbose=self.verbose)
+            logger.info(f"Update fitRBF to {fitRBF_modified:.4f} due to meas_resample (mode = {mode}, scale_factors = {scale_factors}), Npix = {final_Npix}")
             if illum_type == 'electron':
-                vprint(f"Suggested probe_mask_k radius (RBF*2/Npix) changes to > {(fitRBF_modified * 2 / final_Npix):.4f}", verbose=self.verbose)
+                logger.info(f"Suggested probe_mask_k radius (RBF*2/Npix) changes to > {(fitRBF_modified * 2 / final_Npix):.4f}")
                     
         # Set the final dx for internal calibration, this dx would be used for probe, pos, object_extent, H
         self.init_params['probe_dx'] = dx
-        vprint(" ", verbose=self.verbose)
+        logger.info(" ")
 
     def set_variables_dict(self):
-        vprint("### Setting init_variables dict ###", verbose=self.verbose)
+        logger.info("### Setting init_variables dict ###")
         
         # Note that the self.init_params can be modified by _meas_crop and other methods
         # So this method is called after the entire init_measurements is done
@@ -286,21 +286,20 @@ class Initializer:
             n_alpha     = angleMax / conv_angle
             
             # Print some derived values for sanity check
-            if self.verbose:
-                vprint("Derived values given input init_params:")
-                vprint(f'  kv          = {voltage} kV')    
-                vprint(f'  wavelength  = {wavelength:.4f} Ang')
-                vprint(f'  conv_angle  = {conv_angle} mrad')
-                vprint(f'  Npix        = {Npix} px')
-                vprint(f'  dk          = {dk:.4f} Ang^-1')
-                vprint(f'  kMax        = {kMax:.4f} Ang^-1')
-                vprint(f'  da          = {da:.4f} mrad')
-                vprint(f'  angleMax    = {angleMax:.4f} mrad')
-                vprint(f'  RBF         = {inferRBF:.4f} px (Inferred from the given calibration, NOT necessarily from the loaded measurement data)')
-                vprint(f'  n_alpha     = {n_alpha:.4f} (# conv_angle)')
-                vprint(f'  dx          = {dx:.4f} Ang, Nyquist-limited dmin = 2*dx = {2*dx:.4f} Ang')
-                vprint(f'  Rayleigh-limited resolution  = {(0.61*wavelength/conv_angle*1e3):.4f} Ang (0.61*lambda/alpha for focused probe )')
-                vprint(f'  Real space probe extent = {dx*Npix:.4f} Ang')
+            logger.info("Derived values given input init_params:")
+            logger.info(f'  kv          = {voltage} kV')    
+            logger.info(f'  wavelength  = {wavelength:.4f} Ang')
+            logger.info(f'  conv_angle  = {conv_angle} mrad')
+            logger.info(f'  Npix        = {Npix} px')
+            logger.info(f'  dk          = {dk:.4f} Ang^-1')
+            logger.info(f'  kMax        = {kMax:.4f} Ang^-1')
+            logger.info(f'  da          = {da:.4f} mrad')
+            logger.info(f'  angleMax    = {angleMax:.4f} mrad')
+            logger.info(f'  RBF         = {inferRBF:.4f} px (Inferred from the given calibration, NOT necessarily from the loaded measurement data)')
+            logger.info(f'  n_alpha     = {n_alpha:.4f} (# conv_angle)')
+            logger.info(f'  dx          = {dx:.4f} Ang, Nyquist-limited dmin = 2*dx = {2*dx:.4f} Ang')
+            logger.info(f'  Rayleigh-limited resolution  = {(0.61*wavelength/conv_angle*1e3):.4f} Ang (0.61*lambda/alpha for focused probe )')
+            logger.info(f'  Real space probe extent = {dx*Npix:.4f} Ang')
 
         elif probe_illum_type == 'xray':
             energy      = self.init_params['beam_kev']
@@ -318,17 +317,16 @@ class Initializer:
             Ls          = self.init_params['probe_Ls']
             dk          = 1/(dx*Npix)
             
-            if self.verbose:
-                vprint("Derived values given input init_params:")
-                vprint(f'  x-ray beam energy  = {energy} keV')    
-                vprint(f'  wavelength         = {wavelength} m')
-                vprint(f'  outmost zone width = {dRn} m')
-                vprint(f'  Rn                 = {Rn} m')
-                vprint(f'  D_H                = {D_H} m')
-                vprint(f'  D_FZP              = {D_FZP} m')
-                vprint(f'  Ls                 = {Ls} m')
-                vprint(f'  Npix               = {Npix} px')
-                vprint(f'  dx                 = {dx} m')
+            logger.info("Derived values given input init_params:")
+            logger.info(f'  x-ray beam energy  = {energy} keV')    
+            logger.info(f'  wavelength         = {wavelength} m')
+            logger.info(f'  outmost zone width = {dRn} m')
+            logger.info(f'  Rn                 = {Rn} m')
+            logger.info(f'  D_H                = {D_H} m')
+            logger.info(f'  D_FZP              = {D_FZP} m')
+            logger.info(f'  Ls                 = {Ls} m')
+            logger.info(f'  Npix               = {Npix} px')
+            logger.info(f'  dx                 = {dx} m')
         
         else:
             raise ValueError(f"init_params['probe_illum_type'] = {probe_illum_type} not implemented yet, please use either 'electron' or 'xray'!")
@@ -352,13 +350,13 @@ class Initializer:
         self.init_variables['dx']               = dx #   Ang
         self.init_variables['dk']               = dk # 1/Ang
         self.init_variables['slice_thickness']  = self.init_params['obj_slice_thickness']
-        vprint(" ", verbose=self.verbose)
+        logger.info(" ")
 
     def init_probe(self):
         """
         Initialize the probe by loading or simulating and then processing it.
         """
-        vprint("### Initializing probe ###", verbose=self.verbose)
+        logger.info("### Initializing probe ###")
 
         probe = self._load_probe()
         probe = self._process_probe(probe)
@@ -366,14 +364,14 @@ class Initializer:
         self.init_variables['probe'] = probe
 
         # Print summary
-        vprint(f"probe                         (pmode, Ny, Nx) = {probe.dtype}, {probe.shape}", verbose=self.verbose)
-        vprint(" ", verbose=self.verbose)
+        logger.info(f"probe                         (pmode, Ny, Nx) = {probe.dtype}, {probe.shape}")
+        logger.info(" ")
 
     def init_pos(self):
         """
         Initialize the probe positions by loading and processing them.
         """
-        vprint("### Initializing probe positions ###", verbose=self.verbose)
+        logger.info("### Initializing probe positions ###")
     
         pos = self._load_pos()
         pos = self._process_pos(pos)
@@ -390,17 +388,17 @@ class Initializer:
         self.init_variables['scan_affine'] = self.init_params['pos_scan_affine']
     
         # Print summary
-        vprint(f"crop_pos                                (N,2) = {crop_pos.dtype}, {crop_pos.shape}", verbose=self.verbose)
-        vprint(f"crop_pos 1st and last px coords (y,x)         = {crop_pos[0].tolist(), crop_pos[-1].tolist()}", verbose=self.verbose)
-        vprint(f"crop_pos extent (Ang)                         = {(crop_pos.max(0) - crop_pos.min(0))*self.init_variables['dx']}", verbose=self.verbose)
-        vprint(f"probe_pos_shifts                        (N,2) = {probe_pos_shifts.dtype}, {probe_pos_shifts.shape}", verbose=self.verbose)
-        vprint(" ", verbose=self.verbose)
+        logger.info(f"crop_pos                                (N,2) = {crop_pos.dtype}, {crop_pos.shape}")
+        logger.info(f"crop_pos 1st and last px coords (y,x)         = {crop_pos[0].tolist(), crop_pos[-1].tolist()}")
+        logger.info(f"crop_pos extent (Ang)                         = {(crop_pos.max(0) - crop_pos.min(0))*self.init_variables['dx']}")
+        logger.info(f"probe_pos_shifts                        (N,2) = {probe_pos_shifts.dtype}, {probe_pos_shifts.shape}")
+        logger.info(" ")
 
     def init_obj(self):
         """
         Initialize the object by loading and processing it.
         """
-        vprint("### Initializing object ###", verbose=self.verbose)
+        logger.info("### Initializing object ###")
 
         obj = self._load_obj()
         obj = self._process_obj(obj)
@@ -411,9 +409,9 @@ class Initializer:
         # Print summary
         dz = self.init_variables['slice_thickness']
         dx = self.init_variables['dx']
-        vprint(f"object                    (omode, Nz, Ny, Nx) = {obj.dtype}, {obj.shape}", verbose=self.verbose)
-        vprint(f"object extent                 (Z, Y, X) (Ang) = {np.round((obj.shape[1]*dz, obj.shape[2]*dx, obj.shape[3]*dx),4)}", verbose=self.verbose)
-        vprint(" ", verbose=self.verbose)
+        logger.info(f"object                    (omode, Nz, Ny, Nx) = {obj.dtype}, {obj.shape}")
+        logger.info(f"object extent                 (Z, Y, X) (Ang) = {np.round((obj.shape[1]*dz, obj.shape[2]*dx, obj.shape[3]*dx),4)}")
+        logger.info(" ")
 
     def init_omode_occu(self):
         """
@@ -426,7 +424,7 @@ class Initializer:
         omode_occu_params = self.init_params.get('obj_omode_init_occu') or {}
         occu_type = omode_occu_params.get('occu_type', 'uniform')
         init_occu = omode_occu_params.get('init_occu')
-        vprint(f"### Initializing omode_occu from '{occu_type}' ###", verbose=self.verbose)
+        logger.info(f"### Initializing omode_occu from '{occu_type}' ###")
 
         if occu_type   == 'custom':
             omode_occu = np.array(init_occu)
@@ -437,30 +435,30 @@ class Initializer:
             raise ValueError(f"Initialization method {occu_type} not implemented yet, please use 'custom' or 'uniform'!")
         
         omode_occu = omode_occu.astype('float32')
-        vprint(f"omode_occu                            (omode) = {omode_occu.dtype}, {omode_occu.shape}", verbose=self.verbose)
+        logger.info(f"omode_occu                            (omode) = {omode_occu.dtype}, {omode_occu.shape}")
         self.init_variables['omode_occu'] = omode_occu
-        vprint(" ", verbose=self.verbose)
+        logger.info(" ")
 
     def init_H(self):
         """
         Initialize the near-field Fresnel propagator for multislice ptychography
         """
         
-        vprint("### Initializing H (Fresnel propagator) ###", verbose=self.verbose)
+        logger.info("### Initializing H (Fresnel propagator) ###")
         probe_shape = self.init_variables['probe_shape']
         dx = self.init_variables['dx']
         slice_thickness = self.init_variables['slice_thickness']
         lambd = self.init_variables['lambd']
         unit_str = self.init_variables['length_unit']
         
-        vprint(f"Calculating H with probe_shape = {probe_shape} px, dx = {dx:.4f} {unit_str}, slice_thickness = {slice_thickness:.4f} {unit_str}, lambd = {lambd:.4f} {unit_str}", verbose=self.verbose)
+        logger.info(f"Calculating H with probe_shape = {probe_shape} px, dx = {dx:.4f} {unit_str}, slice_thickness = {slice_thickness:.4f} {unit_str}, lambd = {lambd:.4f} {unit_str}")
         
         H = near_field_evolution(probe_shape, dx, slice_thickness, lambd)
         H = H.astype('complex64')
         self.init_variables['H'] = H
         
-        vprint(f"H                                    (Ky, Kx) = {H.dtype}, {H.shape}", verbose=self.verbose)
-        vprint(" ", verbose=self.verbose)
+        logger.info(f"H                                    (Ky, Kx) = {H.dtype}, {H.shape}")
+        logger.info(" ")
     
     def init_obj_tilts(self):
         """
@@ -472,7 +470,7 @@ class Initializer:
         except KeyError as e:
             raise KeyError(f"Missing required configuration field: {e}")
 
-        vprint(f"### Initializing obj tilts from = '{tilt_source}' ###", verbose=self.verbose)
+        logger.info(f"### Initializing obj tilts from = '{tilt_source}' ###")
         
         if tilt_source == 'custom':
             obj_tilts = tilt_params # (1,2) or (N,2) array in unit of mrad
@@ -483,24 +481,24 @@ class Initializer:
             key = tilt_params.get('key')
             _, ext = os.path.splitext(file_path)
             ext = ext.lower()
-            vprint(f"Detected tilt file type = '{ext}'")
+            logger.info(f"Detected tilt file type = '{ext}'")
             
             # Warning when there's no key specified
             if ext in ('.mat', '.h5', '.hdf5') and key is None:
-                vprint(f"WARNING: Couldn't find the 'key' in 'tilt_params' with file type = '{ext}'.")
-                vprint("It is strongly recommended to provide an explicit key to better find the desired dataset, which is often much faster as well.")
-                vprint("PtyRAD will still try to find the dataset, but you may consider setting 'key': <DATASET_KEY> inside your 'tilt_params' dict.")
+                logger.info(f"WARNING: Couldn't find the 'key' in 'tilt_params' with file type = '{ext}'.")
+                logger.info("It is strongly recommended to provide an explicit key to better find the desired dataset, which is often much faster as well.")
+                logger.info("PtyRAD will still try to find the dataset, but you may consider setting 'key': <DATASET_KEY> inside your 'tilt_params' dict.")
             
             if ext == '.raw':
                 raise ValueError("PtyRAD doesn't support loading object tilt from .raw file yet, please use other tilt_source.")
             obj_tilts = np.float32(load_array_from_file(**tilt_params,  ndims=[2]))
-            vprint(f"Initialized obj_tilts with loaded obj_tilts from file, mean obj_tilts = {obj_tilts.mean(0).round(2)} (theta_y, theta_x) mrad", verbose=self.verbose)
+            logger.info(f"Initialized obj_tilts with loaded obj_tilts from file, mean obj_tilts = {obj_tilts.mean(0).round(2)} (theta_y, theta_x) mrad")
             
         elif tilt_source == 'PtyRAD':
             pt_path = tilt_params
             ckpt = self.cache_contents if pt_path == self.cache_path else load_ptyrad(pt_path)            
             obj_tilts = np.float32(ckpt['optimizable_tensors']['obj_tilts'])
-            vprint(f"Initialized obj_tilts with loaded obj_tilts from PtyRAD, mean obj_tilts = {obj_tilts.mean(0).round(2)} (theta_y, theta_x) mrad", verbose=self.verbose)
+            logger.info(f"Initialized obj_tilts with loaded obj_tilts from PtyRAD, mean obj_tilts = {obj_tilts.mean(0).round(2)} (theta_y, theta_x) mrad")
 
         elif tilt_source == 'simu':
             N_scans    = self.init_variables['N_scans']
@@ -509,10 +507,10 @@ class Initializer:
 
             if tilt_type == 'each':
                 obj_tilts = np.broadcast_to(np.float32(init_tilts), shape=(N_scans,2))
-                vprint(f"Initialized obj_tilts with init_tilts = {init_tilts} (theta_y, theta_x) mrad", verbose=self.verbose)
+                logger.info(f"Initialized obj_tilts with init_tilts = {init_tilts} (theta_y, theta_x) mrad")
             elif tilt_type == 'all':
                 obj_tilts = np.broadcast_to(np.float32(init_tilts), shape=(1,2))
-                vprint(f"Initialized obj_tilts with init_tilts = {init_tilts} (theta_y, theta_x) mrad", verbose=self.verbose)
+                logger.info(f"Initialized obj_tilts with init_tilts = {init_tilts} (theta_y, theta_x) mrad")
             else:
                 raise ValueError(f"Tilt type {tilt_type} not implemented yet, please use either 'each', or 'all' when initializing obj_tilts with 'simu'!")
 
@@ -521,8 +519,8 @@ class Initializer:
         
         # Print summary
         self.init_variables['obj_tilts'] = obj_tilts
-        vprint(f"obj_tilts                              (N, 2) = {obj_tilts.dtype}, {obj_tilts.shape}", verbose=self.verbose)
-        vprint(" ", verbose=self.verbose)
+        logger.info(f"obj_tilts                              (N, 2) = {obj_tilts.dtype}, {obj_tilts.shape}")
+        logger.info(" ")
     
     def init_check(self):
         # Although some of the input experimental parameters might not be used directly by the package
@@ -530,7 +528,7 @@ class Initializer:
         # While these check could be performed within the init methods and achieve early return
         # It's more readable to separate the initializaiton logic with the checking logic in this way
         
-        vprint("### Checking consistency between input params with the initialized variables ###", verbose=self.verbose)
+        logger.info("### Checking consistency between input params with the initialized variables ###")
         
         # Check the consistency of init params with the initialized variables
         init_params  = self.init_params
@@ -563,30 +561,30 @@ class Initializer:
         
         # Check DP shape
         if Npix == meas.shape[-2] == meas.shape[-1] == probe.shape[-2] == probe.shape[-1] == H.shape[-2] == H.shape[-1]:
-            vprint(f"Npix, DP measurements, probe, and H shapes are consistent as '{Npix}'", verbose=self.verbose)
+            logger.info(f"Npix, DP measurements, probe, and H shapes are consistent as '{Npix}'")
         elif Npix == target_Npix == probe.shape[-2] == probe.shape[-1] == H.shape[-2] == H.shape[-1]:
-            vprint(f"Npix, DP measurements, probe, and H shapes will be consistent as '{Npix}' during on-the-fly measurement padding", verbose=self.verbose)
+            logger.info(f"Npix, DP measurements, probe, and H shapes will be consistent as '{Npix}' during on-the-fly measurement padding")
         elif Npix == floor(meas.shape[-2]*scale_factors[-2]) == floor(meas.shape[-1]*scale_factors[-1]) == probe.shape[-2] == probe.shape[-1] == H.shape[-2] == H.shape[-1]:
-            vprint(f"Npix, DP measurements, probe, and H shapes will be consistent as '{Npix}' during on-the-fly measurement resampling", verbose=self.verbose)
+            logger.info(f"Npix, DP measurements, probe, and H shapes will be consistent as '{Npix}' during on-the-fly measurement resampling")
         elif Npix == floor(target_Npix*scale_factors[-2]) == floor(target_Npix*scale_factors[-1]) == probe.shape[-2] == probe.shape[-1] == H.shape[-2] == H.shape[-1]:
-            vprint(f"Npix, DP measurements, probe, and H shapes will be consistent as '{Npix}' during on-the-fly measurement padding and then resampling", verbose=self.verbose)
+            logger.info(f"Npix, DP measurements, probe, and H shapes will be consistent as '{Npix}' during on-the-fly measurement padding and then resampling")
         else:
             raise ValueError(f"Found inconsistency between Npix({Npix}), DP measurements({meas.shape[-2:]}), probe({probe.shape[-2:]}), and H({H.shape[-2:]}) shape")
 
         # Check scan pattern
         if N_scans == len(meas) == N_scan_slow*N_scan_fast == len(crop_pos) == len(probe_pos_shifts):
-            vprint(f"N_scans, len(meas), N_scan_slow*N_scan_fast, len(crop_pos), and len(probe_pos_shifts) are consistent as '{N_scans}'", verbose=self.verbose)
+            logger.info(f"N_scans, len(meas), N_scan_slow*N_scan_fast, len(crop_pos), and len(probe_pos_shifts) are consistent as '{N_scans}'")
         else:
             raise ValueError(f"Found inconstency between N_scans({N_scans}), len(meas)({len(meas)}), N_scan_slow({N_scan_slow})*N_scan_fast({N_scan_fast}), len(crop_pos)({len(crop_pos)}), and len(probe_pos_shifts)({len(probe_pos_shifts)})")
         
         # Check object shape
         if obj.shape[0] == len(omode_occu):
-            vprint(f"obj.shape[0] is consistent with len(omode_occu) as '{obj.shape[0]}'", verbose=self.verbose)
+            logger.info(f"obj.shape[0] is consistent with len(omode_occu) as '{obj.shape[0]}'")
         else:
             raise ValueError(f"Found inconsistency between obj.shape[0]({obj.shape[0]}) and len(omode_occu)({len(omode_occu)})")
         
         if obj.shape[1] == Nlayer:        
-            vprint(f"obj.shape[1] is consistent with Nlayer as '{Nlayer}'", verbose=self.verbose)
+            logger.info(f"obj.shape[1] is consistent with Nlayer as '{Nlayer}'")
         else:
             raise ValueError(f"Found inconsistency between obj.shape[1]({obj.shape[1]}) and Nlayer({Nlayer})")
 
@@ -596,15 +594,15 @@ class Initializer:
         
         if (crop_pos.max(0) + Npix - obj.shape[-2:] > 0).any():
             raise ValueError(f"Found invalid crop position. crop_pos.max(0) {crop_pos.max(0)} + Npix ({Npix}) = {crop_pos.max(0) + Npix} must be equal or smaller than object canvas lateral size (Ny, Nx) = {obj.shape[-2:]}. Please check your position and object initialization.")
-        vprint(f"crop positions (yx_min={crop_pos.min(0)}, yx_max={crop_pos.max(0)+Npix}) are well contained inside object canvas (Ny,Nx) = {obj.shape[-2:]}.", verbose=self.verbose)
+        logger.info(f"crop positions (yx_min={crop_pos.min(0)}, yx_max={crop_pos.max(0)+Npix}) are well contained inside object canvas (Ny,Nx) = {obj.shape[-2:]}.")
         
         # Check obj tilts
         if len(obj_tilts) in [1, N_scans]:
-            vprint("obj_tilts is consistent with either 1 or N_scans", verbose=self.verbose)
+            logger.info("obj_tilts is consistent with either 1 or N_scans")
         else:
             raise ValueError(f"Found inconsistency between len(obj_tilts) ({len(obj_tilts)}), 1, and N_scans({N_scans})")
         
-        vprint("Pass the consistency check of initialized variables, initialization is done!", verbose=self.verbose)
+        logger.info("Pass the consistency check of initialized variables, initialization is done!")
     
     def init_provenance(self):
         """
@@ -612,13 +610,13 @@ class Initializer:
         If it's generated from simulation or custom array, the provenance entry would include relevant metadata.
         This is used to track the full history of sequential econstructions.
         """
-        vprint(" ", verbose=self.verbose)
-        vprint("### Collecting reconstruction provenance ###", verbose=self.verbose)
+        logger.info(" ")
+        logger.info("### Collecting reconstruction provenance ###")
         
         recon_provenance = collect_provenance(self.init_params)
         self.init_variables['recon_provenance'] = recon_provenance
 
-        vprint("Reconstruction provenance is collected and initialized.", verbose=self.verbose)
+        logger.info("Reconstruction provenance is collected and initialized.")
     
     def init_all(self):
         # Run this method to initialize all
@@ -703,7 +701,7 @@ class Initializer:
         if meas_source != 'custom' and 'path' not in meas_params:
             raise KeyError(f"'path' is required in 'meas_params' for source '{meas_source}'. Set 'path': <PATH_TO_YOUR_DATASET> inside your 'meas_params' dict.")
 
-        vprint(f"Loading measurements from source = '{meas_source}'", verbose=self.verbose)
+        logger.info(f"Loading measurements from source = '{meas_source}'")
 
         if meas_source == 'custom':
             if not isinstance(meas_params, np.ndarray): # assume to be a numpy array
@@ -716,19 +714,19 @@ class Initializer:
             key = meas_params.get('key')
             _, ext = os.path.splitext(file_path)
             ext = ext.lower()
-            vprint(f"Detected measurement file type = '{ext}'")
+            logger.info(f"Detected measurement file type = '{ext}'")
             
             # Warning when there's no key specified
             if ext in ('.mat', '.h5', '.hdf5') and key is None:
-                vprint(f"WARNING: Couldn't find the 'key' in 'meas_params' with file type = '{ext}'.")
-                vprint("It is strongly recommended to provide an explicit key to better find the desired dataset, which is often much faster as well.")
-                vprint("PtyRAD will still try to find the dataset, but you may consider setting 'key': <DATASET_KEY> inside your 'meas_params' dict.")
+                logger.info(f"WARNING: Couldn't find the 'key' in 'meas_params' with file type = '{ext}'.")
+                logger.info("It is strongly recommended to provide an explicit key to better find the desired dataset, which is often much faster as well.")
+                logger.info("PtyRAD will still try to find the dataset, but you may consider setting 'key': <DATASET_KEY> inside your 'meas_params' dict.")
             
             # Provide default shape for .raw files if it's not specified
             if ext == '.raw' and meas_params.get('shape') is None:
-                vprint(f"WARNING: Couldn't find the 'shape' in 'meas_params' with file type = '{ext}'.")
-                vprint("It is strongly recommended to provide an explicit shape to better load from .raw files")
-                vprint("PtyRAD will still try to load the dataset based on the provided 'init_params', but you may consider setting 'shape': (N_scans, Npix, Npix) inside your 'meas_params' dict.")
+                logger.info(f"WARNING: Couldn't find the 'shape' in 'meas_params' with file type = '{ext}'.")
+                logger.info("It is strongly recommended to provide an explicit shape to better load from .raw files")
+                logger.info("PtyRAD will still try to load the dataset based on the provided 'init_params', but you may consider setting 'shape': (N_scans, Npix, Npix) inside your 'meas_params' dict.")
                 meas_params['shape'] = (self.init_params['pos_N_scans'],
                                         self.init_params['meas_Npix'],
                                         self.init_params['meas_Npix'])
@@ -737,11 +735,11 @@ class Initializer:
         else:
             raise ValueError(f"Unsupported measurement source '{meas_source}'. Use 'custom' or 'file'.")
 
-        vprint(f"Original measurements dtype is {meas.dtype}, casting to float32 (single precision) for computational efficiency.")
+        logger.info(f"Original measurements dtype is {meas.dtype}, casting to float32 (single precision) for computational efficiency.")
         meas = meas.astype('float32', copy=False)
         
-        vprint(f"Imported meausrements shape / dtype = {meas.shape}, dtype = {meas.dtype}", verbose=self.verbose)
-        vprint(f"Imported meausrements int. statistics (min, mean, max) = ({meas.min():.4f}, {meas.mean():.4f}, {meas.max():.4f})", verbose=self.verbose)
+        logger.info(f"Imported meausrements shape / dtype = {meas.shape}, dtype = {meas.dtype}")
+        logger.info(f"Imported meausrements int. statistics (min, mean, max) = ({meas.min():.4f}, {meas.mean():.4f}, {meas.max():.4f})")
         return meas
     
     def _process_meas(self, meas):
@@ -794,13 +792,13 @@ class Initializer:
     
     def _meas_permute(self, meas, order):
         if order is not None:
-            vprint(f"Permuting measurements with order = {order}", verbose=self.verbose)
+            logger.info(f"Permuting measurements with order = {order}")
             return meas.transpose(order)
         return meas
     
     def _meas_reshape(self, meas, target_shape):
         if target_shape is not None:
-            vprint(f"Reshaping measurements to shape = {target_shape}", verbose=self.verbose)
+            logger.info(f"Reshaping measurements to shape = {target_shape}")
             return meas.reshape(target_shape)
         return meas
 
@@ -822,7 +820,7 @@ class Initializer:
         except Exception as e:
             raise ValueError(f"flipT_axes must contain values convertible to int (0 or 1). Got: {flipT_axes}") from e
 
-        vprint(f"Flipping measurements with [flipud, fliplr, transpose] = {flipT_axes}", verbose=self.verbose)
+        logger.info(f"Flipping measurements with [flipud, fliplr, transpose] = {flipT_axes}")
 
         if flipT_axes[0]:
             meas = np.flip(meas, axis=1)
@@ -849,7 +847,7 @@ class Initializer:
         # Reshape (N, ky, kx) -> (N_slow, N_fast, ky, kx)
         Nslow, Nfast = self.init_params['pos_N_scan_slow'], self.init_params['pos_N_scan_fast']
         meas = meas.reshape(Nslow, Nfast, *meas.shape[-2:])
-        vprint(f"Reshaping measurements into {meas.shape} for cropping", verbose=self.verbose)
+        logger.info(f"Reshaping measurements into {meas.shape} for cropping")
 
         axes_names = ['N_slow', 'N_fast', 'ky', 'kx']
         slices = []
@@ -861,21 +859,21 @@ class Initializer:
                 try:
                     start, stop = bounds
                     slices.append(slice(start, stop))
-                    vprint(f"Cropping axis {axes_names[i]} from {start} to {stop}", verbose=self.verbose)
+                    logger.info(f"Cropping axis {axes_names[i]} from {start} to {stop}")
                 except Exception as e:
                     raise ValueError(f"Invalid crop bounds for axis {axes_names[i]}: {bounds}") from e
 
         meas = meas[slices[0], slices[1], slices[2], slices[3]]
-        vprint(f"Cropped measurements have shape (N_slow, N_fast, ky, kx) = {meas.shape}", verbose=self.verbose)
+        logger.info(f"Cropped measurements have shape (N_slow, N_fast, ky, kx) = {meas.shape}")
 
         # Update self.init_params
-        vprint("Update (Npix, N_scans, N_scan_slow, N_scan_fast) after the measurements cropping", verbose=self.verbose)
+        logger.info("Update (Npix, N_scans, N_scan_slow, N_scan_fast) after the measurements cropping")
         self.init_params['meas_Npix'] = meas.shape[-1]
         self.init_params['pos_N_scans'] = meas.shape[0] * meas.shape[1]
         self.init_params['pos_N_scan_slow'] = meas.shape[0]
         self.init_params['pos_N_scan_fast'] = meas.shape[1]
         meas = meas.reshape(-1, meas.shape[-2], meas.shape[-1])
-        vprint(f"Reshape measurements back to (N, ky, kx) = {meas.shape}", verbose=self.verbose)
+        logger.info(f"Reshape measurements back to (N, ky, kx) = {meas.shape}")
 
         return meas  
     
@@ -906,33 +904,33 @@ class Initializer:
         # Check if there are negative values
         if not (meas < 0).any():
             if not force:
-                vprint("No negative values found in measurements. Skipping non-neg correction.", verbose=self.verbose)
+                logger.info("No negative values found in measurements. Skipping non-neg correction.")
                 return meas
             else:
-                vprint(f"No negative values found in measurements, but force = '{force}' so continuing measurement negative value correction", verbose=self.verbose)
+                logger.info(f"No negative values found in measurements, but force = '{force}' so continuing measurement negative value correction")
 
-        vprint(f"Removing negative values in measurement with method = {mode} and value = {value}", verbose=self.verbose)
+        logger.info(f"Removing negative values in measurement with method = {mode} and value = {value}")
 
         if mode == 'subtract_min':
             min_value = meas.min()
             meas -= min_value
             value = None  # Not relevant for this mode
-            vprint(f"Minimum value of {min_value:.4f} subtracted due to the positive px value constraint of measurements", verbose=self.verbose)
+            logger.info(f"Minimum value of {min_value:.4f} subtracted due to the positive px value constraint of measurements")
 
         elif mode == 'clip_value':
             if value is None:
                 raise KeyError("Mode 'clip_value' requires a non-None 'value'.")
-            vprint(f"Minimum value = {meas.min():.4f}, measurements below {value} are clipped to 0 due to the positive px value constraint of measurements", verbose=self.verbose)
+            logger.info(f"Minimum value = {meas.min():.4f}, measurements below {value} are clipped to 0 due to the positive px value constraint of measurements")
             meas[meas < value] = 0
 
         elif mode == 'subtract_value':
             if value is None:
                 raise KeyError("Mode 'subtract_value' requires a non-None 'value'.")
-            vprint(f"Minimum value = {meas.min():.4f}, measurements subtracted by {value} due to the positive px value constraint of measurements", verbose=self.verbose)
+            logger.info(f"Minimum value = {meas.min():.4f}, measurements subtracted by {value} due to the positive px value constraint of measurements")
             meas -= value
 
         elif mode == 'clip_neg': # Default mode
-            vprint(f"Minimum value = {meas.min():.4f}, negative values are clipped to 0 due to the positive px value constraint of measurements", verbose=self.verbose)
+            logger.info(f"Minimum value = {meas.min():.4f}, negative values are clipped to 0 due to the positive px value constraint of measurements")
             meas[meas < 0] = 0
             value = None  # Not relevant for clipping
 
@@ -941,8 +939,8 @@ class Initializer:
 
         # Final check in case the user specified value is not enough to remove all neg values
         if (meas < 0).any():
-            vprint(f"User specified value = {value} is not enough to remove negative values, applying 0 clipping")
-            vprint(f"Minimum value of {meas.min():.4f} is clipped to 0 due to the positive px value constraint of measurements", verbose=self.verbose)
+            logger.info(f"User specified value = {value} is not enough to remove negative values, applying 0 clipping")
+            logger.info(f"Minimum value of {meas.min():.4f} is clipped to 0 due to the positive px value constraint of measurements")
             meas[meas<0] = 0
 
         return meas
@@ -964,25 +962,25 @@ class Initializer:
         norm_mode = norm_cfg.get('mode', 'max_at_one')  # Default to 'max_at_one'
         norm_const = norm_cfg.get('value', None)  # Used for 'divide_const' mode
 
-        vprint(f"Normalizing measurements with mode = '{norm_mode}' and value = '{norm_const}'", verbose=self.verbose)
+        logger.info(f"Normalizing measurements with mode = '{norm_mode}' and value = '{norm_const}'")
 
         if norm_mode == 'max_at_one':
             normalization_const = np.mean(meas, axis=0, dtype=np.float32).max()
-            vprint(f"Normalizing by max of the 2D mean pattern intensity: {normalization_const:.8g}", verbose=self.verbose)
+            logger.info(f"Normalizing by max of the 2D mean pattern intensity: {normalization_const:.8g}")
 
         elif norm_mode == 'mean_at_one':
             normalization_const = np.mean(meas, axis=0, dtype=np.float32).mean()
-            vprint(f"Normalizing by mean of the 2D mean pattern intensity: {normalization_const:.8g}", verbose=self.verbose)
+            logger.info(f"Normalizing by mean of the 2D mean pattern intensity: {normalization_const:.8g}")
 
         elif norm_mode == 'sum_to_one':
             normalization_const = np.mean(meas, axis=0, dtype=np.float32).sum()
-            vprint(f"Normalizing by sum of the 2D mean pattern intensity: {normalization_const:.8g}", verbose=self.verbose)
+            logger.info(f"Normalizing by sum of the 2D mean pattern intensity: {normalization_const:.8g}")
 
         elif norm_mode == 'divide_const':
             if norm_const is None:
                 raise KeyError("Mode 'divide_const' requires a non-None 'norm_const'.")
             normalization_const = norm_const
-            vprint(f"Normalizing by user-defined constant: {normalization_const:.8g}", verbose=self.verbose)
+            logger.info(f"Normalizing by user-defined constant: {normalization_const:.8g}")
 
         else:
             raise ValueError(f"Unsupported normalization mode '{norm_mode}'. Use 'max_at_one', 'mean_at_one', 'sum_to_one', or 'divide_const'.")
@@ -990,8 +988,8 @@ class Initializer:
         # Normalize the measurements
         meas /= normalization_const 
         meas = meas.astype('float32', copy=False) # Skip if dtype = 'float32', otherwise astype will make a copy
-        vprint(f"meausrements shape / dtype = {meas.shape}, dtype = {meas.dtype}", verbose=self.verbose)
-        vprint(f"meausrements int. statistics (min, mean, max) = ({meas.min():.4f}, {meas.mean():.4f}, {meas.max():.4f})", verbose=self.verbose)
+        logger.info(f"meausrements shape / dtype = {meas.shape}, dtype = {meas.dtype}")
+        logger.info(f"meausrements int. statistics (min, mean, max) = ({meas.min():.4f}, {meas.mean():.4f}, {meas.max():.4f})")
 
         return meas
     
@@ -1023,7 +1021,7 @@ class Initializer:
         value = pad_cfg.get('value', 10) # For constant and linear_ramp padding
         threshold = pad_cfg.get('threshold', 70) # For exp and power padding that requires fitting a thresholded mask
 
-        vprint(f"Padding measurements with mode='{mode}', padding_type='{padding_type}', target_Npix={target_Npix}", verbose=self.verbose)
+        logger.info(f"Padding measurements with mode='{mode}', padding_type='{padding_type}', target_Npix={target_Npix}")
 
         # Get amplitude from average DP
         meas_avg = meas.mean(axis=0)
@@ -1066,8 +1064,8 @@ class Initializer:
         meas_padded = np.square(amp_padded)[None,] # (1, ky, kx)
         meas_padded[..., pad_h1:pad_h2, pad_w1:pad_w2] = 0
         padded_int_sum = meas_padded.sum()
-        vprint(f"Original meas int sum = {meas_int_sum:.4f}, padded region int sum = {padded_int_sum:.4f}, or {padded_int_sum/meas_int_sum:.2%} more intensity after padding.", verbose=self.verbose) 
-        vprint("This percentage should be ideally less than 5%, or you should set a lower threshold to exclude more central region.", verbose=self.verbose)
+        logger.info(f"Original meas int sum = {meas_int_sum:.4f}, padded region int sum = {padded_int_sum:.4f}, or {padded_int_sum/meas_int_sum:.2%} more intensity after padding.") 
+        logger.info("This percentage should be ideally less than 5%, or you should set a lower threshold to exclude more central region.")
 
         if mode == 'precompute':
             canvas = np.zeros((meas.shape[0], *meas_padded.shape[1:]))
@@ -1084,7 +1082,7 @@ class Initializer:
             raise ValueError(f"meas_pad does not support mode = '{mode}', please choose from 'on_the_fly', 'precompute', or null")
 
         # Update iself.init_params similar to _meas_crop
-        vprint("Update Npix after the measurements padding", verbose=self.verbose)
+        logger.info("Update Npix after the measurements padding")
         self.init_params['meas_Npix'] = meas_padded.shape[-1] # This will update Npix to target_Npix no matter what mode is used
 
         return meas
@@ -1112,15 +1110,15 @@ class Initializer:
 
         if scale_factors[0] != scale_factors[1]:
             min_scale = min(scale_factors)
-            vprint(f"Non-uniform scale_factors {scale_factors} detected. Using uniform scale factor: {min_scale}")
+            logger.info(f"Non-uniform scale_factors {scale_factors} detected. Using uniform scale factor: {min_scale}")
             scale_factors = [min_scale, min_scale]
         
         # If on-the-fly padding is set, force resample to be on-the-fly as well
         if self.init_variables.get('on_the_fly_meas_padded', None) is not None:
             mode = 'on_the_fly'
-            vprint("'meas_resample' is set to 'on_the_fly' mode because 'meas_pad' is also set to 'on_the_fly' mode", verbose=self.verbose)
+            logger.info("'meas_resample' is set to 'on_the_fly' mode because 'meas_pad' is also set to 'on_the_fly' mode")
 
-        vprint(f"Resampling measurements with mode = '{mode}', scale_factors = {scale_factors}", verbose=self.verbose)
+        logger.info(f"Resampling measurements with mode = '{mode}', scale_factors = {scale_factors}")
 
         if mode == 'precompute':
             zoom_factors = np.array([1.0, *scale_factors]) # scipy.ndimage.zoom applies to all axes.
@@ -1138,8 +1136,8 @@ class Initializer:
 
         # Update self.init_params similar to _meas_crop
         self.init_params['meas_Npix'] = Npix
-        vprint(f"Update Npix into '{Npix}' after the measurements resampling", verbose=self.verbose)
-        vprint(f"Resampled measurements have shape (N_scans, ky, kx) = {meas.shape}", verbose=self.verbose)
+        logger.info(f"Update Npix into '{Npix}' after the measurements resampling")
+        logger.info(f"Resampled measurements have shape (N_scans, ky, kx) = {meas.shape}")
 
         return meas
 
@@ -1149,16 +1147,16 @@ class Initializer:
 
         Nslow, Nfast = self.init_params['pos_N_scan_slow'], self.init_params['pos_N_scan_fast']
         meas = meas.reshape(Nslow, Nfast, *meas.shape[-2:])
-        vprint(f"Reshaping measurements into {meas.shape} for adding partial spatial coherence (source size) induced blurring on measurements", verbose=self.verbose)
+        logger.info(f"Reshaping measurements into {meas.shape} for adding partial spatial coherence (source size) induced blurring on measurements")
 
         # Convert real-space blur in Angstroms to Gaussian std in scan units (px)
         source_size_std_px = source_size_std_ang / self.init_params['pos_scan_step_size']
-        vprint(f"Adding source size (partial spatial coherence) of Gaussian blur std = {source_size_std_px:.4f} scan_step sizes or {source_size_std_ang:.4f} Ang to measurements along the scan directions", verbose=self.verbose)
+        logger.info(f"Adding source size (partial spatial coherence) of Gaussian blur std = {source_size_std_px:.4f} scan_step sizes or {source_size_std_ang:.4f} Ang to measurements along the scan directions")
 
         # Apply blur over scan dimensions (0,1)
         meas = gaussian_filter(meas, sigma=source_size_std_px, axes=(0,1)) # Partial spatial coherence is approximated by mixing DPs at nearby probe positions
         meas = meas.reshape(-1, meas.shape[-2], meas.shape[-1])
-        vprint(f"Reshape measurements back to (N, ky, kx) = {meas.shape}", verbose=self.verbose)
+        logger.info(f"Reshape measurements back to (N, ky, kx) = {meas.shape}")
         
         return meas
 
@@ -1171,7 +1169,7 @@ class Initializer:
             return meas
         
         meas = gaussian_filter(meas, sigma=detector_blur_std_px, axes=(-2,-1)) # Detector blur is essentially the Gaussian blur along ky, kx
-        vprint(f"Adding detector blur (point-spread function of the detector) of Gaussian blur std = {detector_blur_std_px:.4f} px to measurements along the ky, kx directions", verbose=self.verbose)
+        logger.info(f"Adding detector blur (point-spread function of the detector) of Gaussian blur std = {detector_blur_std_px:.4f} px to measurements along the ky, kx directions")
         
         return meas
     
@@ -1190,9 +1188,9 @@ class Initializer:
         # Check negative values before applying Poisson noise
         eps = meas.min() / np.abs(meas.mean() + 1e-12)
         if meas.min() < 0:
-            vprint(f"Found negative values in meas, meas.min() = {meas.min():.4g}.", verbose=self.verbose)
+            logger.info(f"Found negative values in meas, meas.min() = {meas.min():.4g}.")
             if eps > -1e-5:
-                vprint(f"Negative values ({meas[meas < 0].mean():.4g}) are within relative numerical tolerance (min/mean) 1e-5 , clipping negative values to 0.", verbose=self.verbose)
+                logger.info(f"Negative values ({meas[meas < 0].mean():.4g}) are within relative numerical tolerance (min/mean) 1e-5 , clipping negative values to 0.")
                 meas[meas < 0] = 0
             else:
                 raise ValueError(f"meas needs to be positive before applying poisson noise, got meas.min = {meas.min():.4g}. Check your 'meas_remove_neg_values'.")
@@ -1207,25 +1205,25 @@ class Initializer:
         else:
             raise ValueError(f"Unsupported unit for Poisson noise: '{unit}'. Use 'total_e_per_pattern' or 'e_per_Ang2'.")
 
-        vprint(f"total electron per measurement = dose x scan_step_size^2 = {dose:.3f}(e-/Ang^2) x {scan_step_size:.3f}(Ang)^2 = {total_electron:.3f}", verbose=self.verbose)
+        logger.info(f"total electron per measurement = dose x scan_step_size^2 = {dose:.3f}(e-/Ang^2) x {scan_step_size:.3f}(Ang)^2 = {total_electron:.3f}")
 
         # Normalize meas to sum to ~ 1 before applying Poisson noise
-        vprint(f"Before applying Poisson noise: meausrements int. statistics (min, mean, max) = ({meas.min():.4f}, {meas.mean():.5f}, {meas.max():.4f})", verbose=self.verbose)
+        logger.info(f"Before applying Poisson noise: meausrements int. statistics (min, mean, max) = ({meas.min():.4f}, {meas.mean():.5f}, {meas.max():.4f})")
         
         normalization_const = meas.sum() / meas.shape[0]
-        vprint(f"Normalization constant = {normalization_const:.4f}, this makes each measurement sum to ~ 1.", verbose=self.verbose)
+        logger.info(f"Normalization constant = {normalization_const:.4f}, this makes each measurement sum to ~ 1.")
         
         meas /= normalization_const # Make each slice of the meas to sum to ~ 1. A global normalization constant keeps the relative intensity.
-        vprint(f"After applying normalization: meausrements int. statistics (min, mean, max) = ({meas.min():.4f}, {meas.mean():.5f}, {meas.max():.4f})", verbose=self.verbose)
-        vprint(f"Mean total electron per pattern = meas.sum((-2,-1)).mean(0) = ({meas.sum((-2,-1)).mean(0):.5f})", verbose=self.verbose)
+        logger.info(f"After applying normalization: meausrements int. statistics (min, mean, max) = ({meas.min():.4f}, {meas.mean():.5f}, {meas.max():.4f})")
+        logger.info(f"Mean total electron per pattern = meas.sum((-2,-1)).mean(0) = ({meas.sum((-2,-1)).mean(0):.5f})")
 
         set_random_seed(seed=self.random_seed)
         meas = np.random.poisson(meas * total_electron) # poisson returns int32
-        vprint(f"Adding Poisson noise with a total electron per diffraction pattern of {int(total_electron)}", verbose=self.verbose)
-        vprint(f"After applying Poisson noise: meausrements int. statistics (min, mean, max) = ({meas.min():.4f}, {meas.mean():.5f}, {meas.max():.4f})", verbose=self.verbose)
+        logger.info(f"Adding Poisson noise with a total electron per diffraction pattern of {int(total_electron)}")
+        logger.info(f"After applying Poisson noise: meausrements int. statistics (min, mean, max) = ({meas.min():.4f}, {meas.mean():.5f}, {meas.max():.4f})")
 
         meas = (meas * normalization_const / total_electron).astype('float32', copy=False) # Un-normalize meas back to the original scale
-        vprint(f"After un-normalizing back to original scale: meausrements int. statistics (min, mean, max) = ({meas.min():.4f}, {meas.mean():.5f}, {meas.max():.4f})", verbose=self.verbose)
+        logger.info(f"After un-normalizing back to original scale: meausrements int. statistics (min, mean, max) = ({meas.min():.4f}, {meas.mean():.5f}, {meas.max():.4f})")
         
         return meas
 
@@ -1240,7 +1238,7 @@ class Initializer:
             
         # Ensure the directory exists if it's not empty
         if file_dir and not os.path.exists(file_dir):
-            vprint(f"User specified 'file_dir' = '{file_dir}' doesn't exist, creating the directory now.", verbose=self.verbose)
+            logger.info(f"User specified 'file_dir' = '{file_dir}' doesn't exist, creating the directory now.")
             os.makedirs(file_dir, exist_ok=True)
             
         save_array(meas, **export_params)
@@ -1345,7 +1343,7 @@ class Initializer:
         except KeyError as e:
             raise KeyError(f"Missing required configuration field: {e}")
         
-        vprint(f"Loading probe from source = '{probe_source}'", verbose=self.verbose)
+        logger.info(f"Loading probe from source = '{probe_source}'")
 
         if probe_source == 'custom':
             probe = probe_params
@@ -1360,7 +1358,7 @@ class Initializer:
         else:
             raise ValueError(f"Unsupported probe source '{probe_source}'. Use 'custom', 'PtyRAD', 'PtyShv', 'py4DSTEM', or 'simu'.")
 
-        vprint(f"Loaded probe shape = {probe.shape}, dtype = {probe.dtype}", verbose=self.verbose)
+        logger.info(f"Loaded probe shape = {probe.shape}, dtype = {probe.dtype}")
         return probe
 
     def _load_probe_from_ptyrad(self, params: str):
@@ -1374,26 +1372,26 @@ class Initializer:
         mat_version = get_matfile_version(mat_path) #https://docs.scipy.org/doc/scipy-1.11.3/reference/generated/scipy.io.matlab.matfile_version.html
         use_h5py = (mat_version[0] == 2)
         probe = self.cache_contents['probe'] if self.use_cached_probe else load_mat(mat_path, key='probe')
-        vprint(f"Input PtyShv probe has original shape {probe.shape}, while default PtyShv order is (Ny, Nx, pmode, vp)", verbose=self.verbose)
+        logger.info(f"Input PtyShv probe has original shape {probe.shape}, while default PtyShv order is (Ny, Nx, pmode, vp)")
 
         # First unify the axes order induced by loading with scipy / h5py, now it should be (Ny, Nx, pmode, vp)
         if use_h5py:
             probe = probe.transpose(range(probe.ndim)[::-1])
-            vprint(f"Reverse array axes order of probe to {probe.shape} because use_h5py = {use_h5py}, which automatically reverse the order", verbose=self.verbose)
+            logger.info(f"Reverse array axes order of probe to {probe.shape} because use_h5py = {use_h5py}, which automatically reverse the order")
         else:
-            vprint(f"Keep array axes order of probe at {probe.shape} because use_h5py = {use_h5py}", verbose=self.verbose)
+            logger.info(f"Keep array axes order of probe at {probe.shape} because use_h5py = {use_h5py}")
         
         # Correct the probe dimension to 3 dimensions, now it should be (Ny, Nx, pmode)
         if probe.ndim == 4:
-            vprint("Import only the 1st variable probe mode to make a final probe with (pmode, Ny, Nx)", verbose=self.verbose) # I don't find variable probe modes are particularly useful for electon ptychography
+            logger.info("Import only the 1st variable probe mode to make a final probe with (pmode, Ny, Nx)") # I don't find variable probe modes are particularly useful for electon ptychography
             probe = probe[..., 0]
         elif probe.ndim == 2:
-            vprint("Expanding PtyShv probe dimension to make a final probe with (pmode, Ny, Nx)", verbose=self.verbose)
+            logger.info("Expanding PtyShv probe dimension to make a final probe with (pmode, Ny, Nx)")
             probe = probe[..., None]
         
         # Final permutation to make it (pmode, Ny, Nx)
         probe = probe.transpose(2,0,1)
-        vprint(f"Permute the array axes order of probe to {probe.shape} make it (pmode, Ny, Nx)", verbose=self.verbose)
+        logger.info(f"Permute the array axes order of probe to {probe.shape} make it (pmode, Ny, Nx)")
         
         return probe
     
@@ -1407,10 +1405,10 @@ class Initializer:
         hdf5_path = params
         probe = self.cache_contents['probe'] if self.use_cached_probe else load_hdf5(hdf5_path, key='probe')
 
-        vprint(f"Input py4DSTEM probe has original shape {probe.shape}", verbose=self.verbose)
+        logger.info(f"Input py4DSTEM probe has original shape {probe.shape}")
 
         if probe.ndim == 2:
-            vprint("Expanding py4DSTEM probe dimension to make a final probe with (pmode, Ny, Nx)", verbose=self.verbose)
+            logger.info("Expanding py4DSTEM probe dimension to make a final probe with (pmode, Ny, Nx)")
             probe = probe[None, ...]
 
         return probe
@@ -1424,7 +1422,7 @@ class Initializer:
         pmodes           = init_params.get('pmodes', 1)
         pmode_init_pows  = init_params.get('pmode_init_pows', [0.02])
         
-        vprint("Using experimental parameters specified by 'init_params' for initial probe simulation.", verbose=self.verbose)
+        logger.info("Using experimental parameters specified by 'init_params' for initial probe simulation.")
 
         if probe_illum_type == 'electron':
             probe = make_stem_probe(kv=init_params['probe_kv'], 
@@ -1432,7 +1430,7 @@ class Initializer:
                                     Npix=init_params['meas_Npix'], 
                                     dx=init_params['probe_dx'], # dx = 1/(dk*Npix). Unit in angstrom. This entry is automatically generated inside Initializer.init_calibration().
                                     aberrations=init_params['probe_aberrations'], 
-                                    verbose=self.verbose)[None, ...]
+                                    )[None, ...]
 
         elif probe_illum_type == 'xray':
             probe = make_fzp_probe(beam_kev=init_params['beam_kev'],
@@ -1443,14 +1441,14 @@ class Initializer:
                                    dRn=init_params['probe_dRn'],
                                    D_FZP=init_params['probe_D_FZP'],
                                    D_H=init_params['probe_D_H'],
-                                   verbose=self.verbose)[None, ...]
+                                   )[None, ...]
 
         else:
             raise ValueError(f"Unsupported illumination type '{probe_illum_type}'. Use 'electron' or 'xray'.")
 
         # probe is (1, Ny, Nx) after simulation, expand it to (pmode, Ny, Nx) if needed
         if pmodes > 1:
-            probe = make_mixed_probe(probe[0], pmodes=pmodes, pmode_init_pows=pmode_init_pows, verbose=self.verbose)
+            probe = make_mixed_probe(probe[0], pmodes=pmodes, pmode_init_pows=pmode_init_pows)
 
         return probe
 
@@ -1474,7 +1472,7 @@ class Initializer:
         Permute the probe dimensions if specified in the parameters.
         """
         if order is not None:
-            vprint(f"Permuting probe with order = {order}", verbose=self.verbose)
+            logger.info(f"Permuting probe with order = {order}")
             probe = probe.transpose(order)
         return probe
     
@@ -1488,18 +1486,18 @@ class Initializer:
         pmode_init_pow = [min(pmode_init_pows)] # pmode_init_pows is a list of float(s), so we convert it into a list of float
         
         if pmode_now > pmode_max:
-            vprint(f"pmode_now: {pmode_now} and pmode_max: {pmode_max}, capping the pmode.", verbose=self.verbose)
+            logger.info(f"pmode_now: {pmode_now} and pmode_max: {pmode_max}, capping the pmode.")
             probe_final = probe[:pmode_max]
         
         elif pmode_now == pmode_max:
-            vprint(f"pmode_now: {pmode_now} and pmode_max: {pmode_max}, leaving the pmode unchanged.", verbose=self.verbose)
+            logger.info(f"pmode_now: {pmode_now} and pmode_max: {pmode_max}, leaving the pmode unchanged.")
             probe_final = probe
         
         else: # pmode_now <= pmode_max: # Need to pad new probe modes
-            vprint(f"pmode_now: {pmode_now} and pmode_max: {pmode_max}, padding the pmode.", verbose=self.verbose)
+            logger.info(f"pmode_now: {pmode_now} and pmode_max: {pmode_max}, padding the pmode.")
             num_new_modes = pmode_max - pmode_now
-            vprint(f"Creating {num_new_modes} new probe modes from the major mode", verbose=self.verbose)
-            mixed_probe_temp = make_mixed_probe(probe[0], pmode_max, pmode_init_pow, verbose=False) # Take the strongest probe mode and make a temporary new mixed probe (int sum at 1)
+            logger.info(f"Creating {num_new_modes} new probe modes from the major mode")
+            mixed_probe_temp = make_mixed_probe(probe[0], pmode_max, pmode_init_pow) # Take the strongest probe mode and make a temporary new mixed probe (int sum at 1)
             new_modes = mixed_probe_temp[-num_new_modes:] * probe_int_sum ** 0.5 # Normalize the new mode intensity with original intensity
             probe_final = np.concatenate((probe, new_modes), axis=0) # Total int = 1 + num_new_modes * pmode_init_pow, will normalize it later
             
@@ -1509,11 +1507,11 @@ class Initializer:
         
         # Optional orthogonalization and sorting
         if orthogonalize:
-            vprint(f"Orthogonalizing {len(probe_final)} pmodes", verbose=self.verbose)
+            logger.info(f"Orthogonalizing {len(probe_final)} pmodes")
             probe_final = orthogonalize_modes_vec_np(probe_final)
             
         if sort:
-            vprint(f"Sorting {len(probe_final)} pmodes by their intensities", verbose=self.verbose)
+            logger.info(f"Sorting {len(probe_final)} pmodes by their intensities")
             probe_final = sort_by_mode_int_np(probe_final)
             
         return probe_final
@@ -1533,7 +1531,7 @@ class Initializer:
             lambd = self.init_variables['lambd']
             unit_str = self.init_variables['length_unit']
             
-            vprint(f"Applying additional axial propagation (z) = {prop_distance} {unit_str} to the probe. Positive value means forward propagation (i.e., increasing depth/z).", verbose=self.verbose)
+            logger.info(f"Applying additional axial propagation (z) = {prop_distance} {unit_str} to the probe. Positive value means forward propagation (i.e., increasing depth/z).")
             H = near_field_evolution(probe.shape[-2:], dx, prop_distance, lambd)
             probe_shifted = np.fft.ifft2(H[None,] * np.fft.fft2(probe))
             return probe_shifted
@@ -1556,12 +1554,12 @@ class Initializer:
             # becasue on-the-fly padding could increase the total meas intensity
             meas_total_ints = self.init_variables['meas_total_ints']
         except KeyError:
-            vprint("WARNING: Measurement total intensities ('meas_total_ints') not found in init.init_variables. Initializing measurements first for probe normalization...", verbose=self.verbose)
-            vprint(" ", verbose=self.verbose)
+            logger.info("WARNING: Measurement total intensities ('meas_total_ints') not found in init.init_variables. Initializing measurements first for probe normalization...")
+            logger.info(" ")
             self.init_measurements()
             meas_total_ints = self.init_variables['meas_total_ints']
 
-        vprint(f"Normalizing probe intensity with mode = '{norm_mode}' and value = '{norm_const}'", verbose=self.verbose)
+        logger.info(f"Normalizing probe intensity with mode = '{norm_mode}' and value = '{norm_const}'")
 
         # Dispatch the normalizing methods
         if norm_mode == 'mean_total_ints':
@@ -1573,7 +1571,7 @@ class Initializer:
         
         normalization_factor = (np.sum(np.abs(probe) ** 2) / target_int) ** 0.5
         probe = probe / normalization_factor
-        vprint(f"sum(|probe_data|**2) = {np.sum(np.abs(probe)**2):.2f}, while meas_total_ints (min, mean, max) = ({meas_total_ints.min():.4f}, {meas_total_ints.mean():.4f}, {meas_total_ints.max():.4f})", verbose=self.verbose)
+        logger.info(f"sum(|probe_data|**2) = {np.sum(np.abs(probe)**2):.2f}, while meas_total_ints (min, mean, max) = ({meas_total_ints.min():.4f}, {meas_total_ints.mean():.4f}, {meas_total_ints.max():.4f})")
         return probe.astype('complex64')
    
     ###### Private methods for initializing positions ######
@@ -1590,7 +1588,7 @@ class Initializer:
         except KeyError as e:
             raise KeyError(f"Missing required configuration field: {e}")
     
-        vprint(f"Loading probe positions from source = '{pos_source}'", verbose=self.verbose)
+        logger.info(f"Loading probe positions from source = '{pos_source}'")
     
         if pos_source == 'custom':
             pos = pos_params
@@ -1622,12 +1620,12 @@ class Initializer:
         mat_version = get_matfile_version(mat_path) # https://docs.scipy.org/doc/scipy-1.11.3/reference/generated/scipy.io.matlab.matfile_version.html
         use_h5py = (mat_version[0] == 2)
         mat_contents = self.cache_contents if self.use_cached_pos else load_mat(mat_path, key=['object', 'probe', 'outputs.probe_positions'], delimiter='.')
-        vprint(f"Input PtyShv probe positions has original shape {mat_contents['outputs.probe_positions'].shape}, while default PtyShv order is (N, 2)", verbose=self.verbose)
+        logger.info(f"Input PtyShv probe positions has original shape {mat_contents['outputs.probe_positions'].shape}, while default PtyShv order is (N, 2)")
 
         # First unify the axes order induced by loading with scipy / h5py, now it should be (N, 2)
         if use_h5py:
             mat_contents = {key: arr.transpose(range(arr.ndim)[::-1]) for key, arr in mat_contents.items()}
-            vprint(f"Reverse array axes order because use_h5py = {use_h5py}, which automatically reverse the order", verbose=self.verbose)
+            logger.info(f"Reverse array axes order because use_h5py = {use_h5py}, which automatically reverse the order")
 
         probe_positions = mat_contents['outputs.probe_positions']
         probe_shape = mat_contents['probe'].shape[:2]   # Matlab probe is (Ny,Nx,pmode,vp) or (Ny,Nx,pmode)
@@ -1664,10 +1662,10 @@ class Initializer:
     def _simulate_pos(self, simu_params: dict):
 
         if simu_params is not None:
-            vprint("Using user-specified parameters in 'init_params['pos_params']' for initial position simulation.", verbose=self.verbose)
+            logger.info("Using user-specified parameters in 'init_params['pos_params']' for initial position simulation.")
         else:
             simu_params = {}
-            vprint("Using experimental parameters specified by 'init_params' (dx, scan_step size, N_scan_slow, N_scan_fast) for initial position simulation.", verbose=self.verbose)
+            logger.info("Using experimental parameters specified by 'init_params' (dx, scan_step size, N_scan_slow, N_scan_fast) for initial position simulation.")
 
         # The unspecified parameters will be set to the values specified in self.init_variables
         dx        = simu_params.get('dx', self.init_variables['dx'])
@@ -1676,7 +1674,7 @@ class Initializer:
         N_scan_fast    = simu_params.get('N_scan_fast', self.init_variables['N_scan_fast'])
         probe_shape    = simu_params.get('probe_shape', self.init_variables['probe_shape'])
         
-        vprint(f"Simulating probe positions with dx = {dx:.4f}, scan_step_size = {scan_step_size:.4f}, N_scan_fast = {N_scan_fast}, N_scan_slow = {N_scan_slow}", verbose=self.verbose)
+        logger.info(f"Simulating probe positions with dx = {dx:.4f}, scan_step_size = {scan_step_size:.4f}, N_scan_fast = {N_scan_fast}, N_scan_slow = {N_scan_slow}")
         pos = scan_step_size / dx * np.array([(y, x) for y in range(N_scan_slow) for x in range(N_scan_fast)]) # (N,2), each row is (y,x)
         pos = pos - pos.mean(0) # Center scan around origin
         obj_shape = 1.2 * np.ceil(pos.max(0) - pos.min(0) + probe_shape)
@@ -1713,7 +1711,7 @@ class Initializer:
         except Exception as e:
             raise ValueError(f"flipT_axes must contain values convertible to int (0 or 1). Got: {flipT_axes}") from e
         
-        vprint(f"Flipping scan pattern with [flipup, fliplr, transpose] = {flipT_axes}", verbose=self.verbose)
+        logger.info(f"Flipping scan pattern with [flipup, fliplr, transpose] = {flipT_axes}")
         
         # Convert the binary code to the indices of non-zero axis. E.g. scan_flipT = [0,1,1] => flip the axes = [1,2]
         flipT_axes = np.nonzero(flipT_axes)[0] 
@@ -1726,7 +1724,7 @@ class Initializer:
     def _pos_scan_affine_transform(self, pos, scan_affine):
         if scan_affine is not None:
             (scale, asymmetry, rotation, shear) = scan_affine
-            vprint(f"Applying affine transformation to scan pattern with (scale, asymmetry, rotation, shear) = {(scale, asymmetry, rotation, shear)}", verbose=self.verbose)
+            logger.info(f"Applying affine transformation to scan pattern with (scale, asymmetry, rotation, shear) = {(scale, asymmetry, rotation, shear)}")
             pos = pos - pos.mean(0)
             pos = pos @ compose_affine_matrix(scale, asymmetry, rotation, shear)
             probe_shape = self.init_variables['probe_shape']
@@ -1736,7 +1734,7 @@ class Initializer:
     
     def _pos_scan_add_random_displacement(self, pos, scan_rand_std):
         if scan_rand_std is not None:
-            vprint(f"Applying Gaussian distributed random displacement with std = {scan_rand_std} px to scan positions", verbose=self.verbose)
+            logger.info(f"Applying Gaussian distributed random displacement with std = {scan_rand_std} px to scan positions")
             set_random_seed(seed=self.random_seed)
             pos = pos + scan_rand_std * np.random.randn(*pos.shape)
         return pos
@@ -1755,7 +1753,7 @@ class Initializer:
         except KeyError as e:
             raise KeyError(f"Missing required configuration field: {e}")
 
-        vprint(f"Loading object from source = '{obj_source}'", verbose=self.verbose)
+        logger.info(f"Loading object from source = '{obj_source}'")
 
         if obj_source == 'custom':
             obj = obj_params
@@ -1785,14 +1783,14 @@ class Initializer:
         mat_version = get_matfile_version(mat_path)
         use_h5py = (mat_version[0] == 2)
         obj = self.cache_contents['object'] if self.use_cached_obj else load_mat(mat_path, key='object')
-        vprint(f"Input PtyShv object has original shape {obj.shape}, while default PtyShv order is (Ny, Nx, Nz)", verbose=self.verbose)
+        logger.info(f"Input PtyShv object has original shape {obj.shape}, while default PtyShv order is (Ny, Nx, Nz)")
 
         # First unify the axes order induced by loading with scipy / h5py, now it should be (Ny, Nx, Nz)
         if use_h5py:
             obj = obj.transpose(range(obj.ndim)[::-1])
-            vprint(f"Reverse array axes order because use_h5py = {use_h5py}, which automatically reverse the order", verbose=self.verbose)
+            logger.info(f"Reverse array axes order because use_h5py = {use_h5py}, which automatically reverse the order")
     
-        vprint("Expanding and permuting PtyShv object dimension to make a final object shape with (omode, Nz, Ny, Nx)", verbose=self.verbose)
+        logger.info("Expanding and permuting PtyShv object dimension to make a final object shape with (omode, Nz, Ny, Nx)")
         if len(obj.shape) == 2:  # Single-slice ptycho
             obj = obj[None, None, :, :]
         elif len(obj.shape) == 3:  # Multi-slice ptycho
@@ -1804,8 +1802,8 @@ class Initializer:
         hdf5_path = params
         obj = self.cache_contents['object'] if self.use_cached_obj else load_hdf5(hdf5_path, key='object')
     
-        vprint(f"Input py4DSTEM object has original shape {obj.shape}", verbose=self.verbose)
-        vprint("Expanding py4DSTEM object dimension to (omode, Nz, Ny, Nx)", verbose=self.verbose)
+        logger.info(f"Input py4DSTEM object has original shape {obj.shape}")
+        logger.info("Expanding py4DSTEM object dimension to (omode, Nz, Ny, Nx)")
 
         if len(obj.shape) == 2:  # Single-slice ptycho
             obj = obj[None, None, :, :]
@@ -1817,21 +1815,21 @@ class Initializer:
     def _simulate_obj(self, simu_params):
         
         if simu_params is not None:
-            vprint("Using user-specified parameters in 'init_params['obj_params']' for initial object simulation.", verbose=self.verbose)
+            logger.info("Using user-specified parameters in 'init_params['obj_params']' for initial object simulation.")
             obj_shape = simu_params
             if len(obj_shape) != 4:
                 raise ValueError(f"Input `obj_shape` = {obj_shape}, please provide a total dimension of 4 with (omode, Nz, Ny, Nx).")
             
         else:
-            vprint("Using experimental parameters specified by 'init_params' for initial object simulation.", verbose=self.verbose)
+            logger.info("Using experimental parameters specified by 'init_params' for initial object simulation.")
             omode = self.init_params['obj_omode_max']
             Nz = self.init_params['obj_Nlayer']
             
             try:
                 Ny, Nx = self.init_variables['obj_lateral_extent']
             except KeyError:
-                vprint("WARNING: 'obj_lateral_extent' not found. Initializing positions first for obj_shape estimation...", verbose=self.verbose)
-                vprint(" ", verbose=self.verbose)
+                logger.info("WARNING: 'obj_lateral_extent' not found. Initializing positions first for obj_shape estimation...")
+                logger.info(" ")
                 self.init_pos()
                 Ny, Nx = self.init_variables['obj_lateral_extent']
                 
@@ -1869,14 +1867,14 @@ class Initializer:
         try:
             z_start, z_end = crop_range
             selected_slices = slice(z_start, z_end)
-            vprint(f"Cropping object depth from z_start: {z_start} to z_end: {z_end}", verbose=self.verbose)
+            logger.info(f"Cropping object depth from z_start: {z_start} to z_end: {z_end}")
         except Exception as e:
             raise ValueError(f"Invalid crop range for object depth: {crop_range}, object shape is {obj.shape}") from e
 
-        vprint(f"Current object has shape (omode, Nz, Ny, Nx) = {obj.shape}", verbose=self.verbose)
+        logger.info(f"Current object has shape (omode, Nz, Ny, Nx) = {obj.shape}")
         
         obj = obj[:,selected_slices,:,:]
-        vprint(f"Cropped object has shape (omode, Nz, Ny, Nx) = {obj.shape}", verbose=self.verbose)
+        logger.info(f"Cropped object has shape (omode, Nz, Ny, Nx) = {obj.shape}")
         
         # Update init_params['obj_Nlayer]
         self.init_params['obj_Nlayer'] = obj.shape[1]
@@ -1895,8 +1893,8 @@ class Initializer:
         pad_layers = pad_cfg['pad_layers']
         pad_types  = pad_cfg['pad_types']
 
-        vprint(f"Current object has shape (omode, Nz, Ny, Nx) = {obj.shape}", verbose=self.verbose)
-        vprint(f"Padding object along depth with pad_layers = {pad_layers}, pad_types = {pad_types}", verbose=self.verbose)
+        logger.info(f"Current object has shape (omode, Nz, Ny, Nx) = {obj.shape}")
+        logger.info(f"Padding object along depth with pad_layers = {pad_layers}, pad_types = {pad_types}")
 
         # Assign variables
         pad_layer_top, pad_layer_bottom = pad_layers
@@ -1940,7 +1938,7 @@ class Initializer:
         top_layers    = _create_z_pad(obj, num_layers=pad_layer_top,    pad_type=pad_type_top,    top_or_bottom='top')
         bottom_layers = _create_z_pad(obj, num_layers=pad_layer_bottom, pad_type=pad_type_bottom, top_or_bottom='bottom')
         obj = np.concatenate((top_layers, obj, bottom_layers), axis=1)
-        vprint(f"Padded object has shape (omode, Nz, Ny, Nx) = {obj.shape}", verbose=self.verbose)
+        logger.info(f"Padded object has shape (omode, Nz, Ny, Nx) = {obj.shape}")
         
         # Update init_params['obj_Nlayer]
         self.init_params['obj_Nlayer'] = obj.shape[1]
@@ -1966,10 +1964,10 @@ class Initializer:
         length_unit = self.init_variables['length_unit']
         
         # Print current status
-        vprint(f"Current object has shape (omode, Nz, Ny, Nx) = {(obj.shape)}", verbose=self.verbose)
-        vprint(f"Current object has slice thickness = {dz_now:.3f} {length_unit}", verbose=self.verbose)
-        vprint(f"Current object has mean(prod(amp, axis='depth')) = {np.mean(np.prod(np.abs(obj), axis=1)):.3f}, mean(sum(phase, axis='depth')) = {np.mean(np.sum(np.angle(obj), axis=1)):.3g}", verbose=self.verbose)
-        vprint(f"Resampling object along depth with resampling mode = '{resample_mode}', value = {resample_value}", verbose=self.verbose)
+        logger.info(f"Current object has shape (omode, Nz, Ny, Nx) = {(obj.shape)}")
+        logger.info(f"Current object has slice thickness = {dz_now:.3f} {length_unit}")
+        logger.info(f"Current object has mean(prod(amp, axis='depth')) = {np.mean(np.prod(np.abs(obj), axis=1)):.3f}, mean(sum(phase, axis='depth')) = {np.mean(np.sum(np.angle(obj), axis=1)):.3g}")
+        logger.info(f"Resampling object along depth with resampling mode = '{resample_mode}', value = {resample_value}")
         
         # Get resampled object and infer new slice thickness
         obja_resample, objp_resample = complex_object_z_resample_torch(obj, dz_now, resample_mode, resample_value, output_type='amp_phase', return_np=True) # Output amplitude and phase separately so we can check the phase value directly
@@ -1979,7 +1977,7 @@ class Initializer:
         
         # Print warning if there's phase wrapping
         if objp_resample.max() > 2*np.pi:
-            vprint(f"Warning: Resampled object phase has a maximum value = {objp_resample.max():.3f} > 2pi, this would cause phase wrapping, try using thinner slices.")
+            logger.info(f"Warning: Resampled object phase has a maximum value = {objp_resample.max():.3f} > 2pi, this would cause phase wrapping, try using thinner slices.")
         
         # Update Nlayer and slice thickness
         self.init_params['obj_Nlayer'] = obj_resample.shape[1]
@@ -1987,9 +1985,9 @@ class Initializer:
         self.init_variables['slice_thickness'] = dz_new
         
         # Print final status
-        vprint(f"Resampled object has shape (omode, Nz, Ny, Nx) = {(obj_resample.shape)}", verbose=self.verbose)
-        vprint(f"Resampled object has slice thickness = {dz_new:.3f} {length_unit}", verbose=self.verbose)
-        vprint(f"Resampled object has mean(prod(amp, axis='depth')) = {np.mean(np.prod(np.abs(obj_resample), axis=1)):.3f}, mean(sum(phase, axis='depth')) = {np.mean(np.sum(np.angle(obj_resample), axis=1)):.3g}", verbose=self.verbose)
+        logger.info(f"Resampled object has shape (omode, Nz, Ny, Nx) = {(obj_resample.shape)}")
+        logger.info(f"Resampled object has slice thickness = {dz_new:.3f} {length_unit}")
+        logger.info(f"Resampled object has mean(prod(amp, axis='depth')) = {np.mean(np.prod(np.abs(obj_resample), axis=1)):.3f}, mean(sum(phase, axis='depth')) = {np.mean(np.sum(np.angle(obj_resample), axis=1)):.3g}")
         
         return obj_resample
     
@@ -2001,17 +1999,17 @@ class Initializer:
         omode_now = obj.shape[0]
         
         if omode_now > omode_max:
-            vprint(f"omode_now: {omode_now} and omode_max: {omode_max}, capping the omode.", verbose=self.verbose)
+            logger.info(f"omode_now: {omode_now} and omode_max: {omode_max}, capping the omode.")
             obj_final = obj[:omode_max]
         
         elif omode_now == omode_max:
-            vprint(f"omode_now: {omode_now} and omode_max: {omode_max}, leaving the omode unchanged.", verbose=self.verbose)
+            logger.info(f"omode_now: {omode_now} and omode_max: {omode_max}, leaving the omode unchanged.")
             obj_final = obj
         
         else: # omode_now <= omode_max: # Need to pad new probe modes
-            vprint(f"omode_now: {omode_now} and omode_max: {omode_max}, padding the omode.", verbose=self.verbose)
+            logger.info(f"omode_now: {omode_now} and omode_max: {omode_max}, padding the omode.")
             num_new_modes = omode_max - omode_now
-            vprint(f"Creating {num_new_modes} new object modes from the mean and std of original object modes", verbose=self.verbose)
+            logger.info(f"Creating {num_new_modes} new object modes from the mean and std of original object modes")
             
             # Assign variables
             obja = np.abs(obj)

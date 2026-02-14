@@ -6,12 +6,13 @@ Image processing tools for fitting, cropping, normalization, etc.
 from typing import Optional, Tuple
 
 import numpy as np
+import logging
 
-from ptyrad.runtime.logging import vprint # TODO: Remove the heavy torch-related vprint once we have a more modern logging
+logger = logging.getLogger(__name__)
 
 
 # Some quick estimation analysis tools
-def get_blob_size(dx, blob, output='d90', plot_profile=False, verbose=True):
+def get_blob_size(dx, blob, output='d90', plot_profile=False):
     import matplotlib.pyplot as plt
     """ Get the probe / blob size
 
@@ -112,8 +113,8 @@ def get_blob_size(dx, blob, output='d90', plot_profile=False, verbose=True):
     else:
         raise ValueError(f"output ={output} not implemented!")
     
-    if output not in ['radial_profile', 'radial_sum', 'fig'] and verbose:
-        vprint(f'{output} = {out/dx:.3f} px or {out:.3f} Ang')
+    if output not in ['radial_profile', 'radial_sum', 'fig']:
+        logger.info(f'{output} = {out/dx:.3f} px or {out:.3f} Ang')
     return out
 
 def guess_radius_of_bright_field_disk(image: np.ndarray, thresh: float=0.5):
@@ -127,7 +128,7 @@ def guess_radius_of_bright_field_disk(image: np.ndarray, thresh: float=0.5):
     return rbf
 
 # Use in initial estimation of CBED geometry (center, radius, and edge blur)
-def fit_cbed_pattern(image: np.ndarray, initial_guess=None, verbose=False):
+def fit_cbed_pattern(image: np.ndarray, initial_guess=None):
     """
     Estimate the center, radius, and std of a CBED pattern by minimizing
     the difference between the observed image and a synthetic model.
@@ -135,7 +136,6 @@ def fit_cbed_pattern(image: np.ndarray, initial_guess=None, verbose=False):
     Args:
         image (np.ndarray): The input image to fit.
         initial_guess (dict, optional): Dictionary with initial guess parameters.
-        verbose (bool): Whether to print detailed information during fitting.
         
     Returns:
         dict: Dictionary containing the fitted parameters as dict['center', 'radius', 'std'].
@@ -175,19 +175,19 @@ def fit_cbed_pattern(image: np.ndarray, initial_guess=None, verbose=False):
     
     p0 = [y0_guess, x0_guess, r_guess, std_guess]
     
-    vprint(f"Initial guess: center=({y0_guess:.2f}, {x0_guess:.2f}), radius={r_guess:.2f}, Gaussian blur std={std_guess:.2f}", verbose=verbose)
+    logger.info(f"Initial guess: center=({y0_guess:.2f}, {x0_guess:.2f}), radius={r_guess:.2f}, Gaussian blur std={std_guess:.2f}")
         
     # Use tighter bounds for optimization
     bounds = [(0, Npix-1), (0, Npix-1), (1, Npix/2), (0, 5)]
 
     # Run optimization with more iterations and a higher tolerance
-    options = {'maxiter': 1000, 'disp': verbose}
+    options = {'maxiter': 1000, 'disp': False}
     result = minimize(loss, p0, bounds=bounds, method='L-BFGS-B', options=options)
     counts = 1
     
     # Try multiple starting points if the first optimization doesn't succeed
     if not result.success or result.fun > 0.01:
-        vprint("First optimization attempt didn't converge well, trying different starting points", verbose=verbose)
+        logger.info("First optimization attempt didn't converge well, trying different starting points")
         
         # Try a few different starting points
         best_result = result
@@ -201,13 +201,12 @@ def fit_cbed_pattern(image: np.ndarray, initial_guess=None, verbose=False):
                 
                 if new_result.fun < best_result.fun:
                     best_result = new_result
-                    if verbose:
-                        vprint(f"Found better solution with starting point at ({new_p0[0]:.2f}, {new_p0[1]:.2f})")
-        vprint(f"Total fitting trials with different initial guesses = {counts}", verbose=verbose)
+                    logger.info(f"Found better solution with starting point at ({new_p0[0]:.2f}, {new_p0[1]:.2f})")
+        logger.info(f"Total fitting trials with different initial guesses = {counts}")
         result = best_result
 
     y0, x0, r, std = result.x
-    vprint(f"Final fit: center=({y0:.2f}, {x0:.2f}), radius={r:.2f}, Gaussian blur std={std:.2f}", verbose=verbose)
+    logger.info(f"Final fit: center=({y0:.2f}, {x0:.2f}), radius={r:.2f}, Gaussian blur std={std:.2f}")
     return {
         "center": (y0, x0),
         "radius": r,
@@ -327,10 +326,10 @@ def normalize_by_bit_depth(arr, bit_depth):
 def create_one_hot_mask(image, percentile):
     threshold = np.percentile(image, percentile)
     mask = image <= threshold
-    vprint(f"Using percentile = {percentile:.2f}% to create an one-hot mask for measurements amplitude background fitting")
+    logger.info(f"Using percentile = {percentile:.2f}% to create an one-hot mask for measurements amplitude background fitting")
     radius_px = np.sqrt(np.abs(1-mask).sum() / np.pi)
     radius_r  = radius_px / (len(mask)//2)
-    vprint(f"The mask has roughly {radius_px:.2f} px in radius, or {radius_r:.2f} of the distance from center to edge of the image")
+    logger.info(f"The mask has roughly {radius_px:.2f} px in radius, or {radius_r:.2f} of the distance from center to edge of the image")
     return mask.astype(int)
 
 def fit_background(image, mask, fit_type='exp'):
@@ -347,12 +346,12 @@ def fit_background(image, mask, fit_type='exp'):
         initial_guess = [np.max(masked_image), 0.1]  # [a_guess, b_guess]
         bounds = ([0, 0], [np.inf, np.inf])  # a > 0, b > 0
         popt, _ = curve_fit(exponential_decay, masked_r, masked_image, p0=initial_guess, bounds=bounds,maxfev=10000)
-        vprint(f"Fitted a = {popt[0]:.4f}, b = {popt[1]:.4f} for exponential decay: y = a*exp(-b*r)")
+        logger.info(f"Fitted a = {popt[0]:.4f}, b = {popt[1]:.4f} for exponential decay: y = a*exp(-b*r)")
     elif fit_type == 'power':
         initial_guess = [np.max(masked_image), 1]  # [a_guess, b_guess]
         bounds = ([0, 0], [np.inf, np.inf])  # a > 0, b > 0
         popt, _ = curve_fit(power_law, masked_r, masked_image, p0=initial_guess, bounds=bounds, maxfev=10000)
-        vprint(f"Fitted a = {popt[0]:.4f}, b = {popt[1]:.4f} for power law decay: y = a*r^-b")
+        logger.info(f"Fitted a = {popt[0]:.4f}, b = {popt[1]:.4f} for power law decay: y = a*r^-b")
     else:
         raise ValueError("fit_type must be 'exp' or 'power'")
     

@@ -4,6 +4,7 @@ Optimizable model of the ptychographic reconstruction using automatic differenti
 This is the PyTorch model that holds optimizable tensors and interacts with loss and constraints.
 
 """
+import logging
 
 import torch
 import torch.nn as nn
@@ -13,7 +14,6 @@ from torchvision.transforms.functional import gaussian_blur
 from ptyrad.core.forward import multislice_forward
 from ptyrad.core.functional import imshift_batch, torch_phasor
 from ptyrad.io.dataloader import MeasDataLoader
-from ptyrad.runtime.logging import vprint
 
 # The obj_ROI_grid is modified from precalculation to on-the-fly generation for memory consumption
 # It has very little performance impact but saves lots of memory for large 4D-STEM data
@@ -28,6 +28,8 @@ from ptyrad.runtime.logging import vprint
 # Note that it's possible to reduce the peak-memory consumption by reducing the level of vectorizaiton and roll back to for loops
 # Lastly, the forward pass of this model would output the dp_fwd (N, Ky, Kx) and objp_patches (N, omode, Nz, Ny, Nx) in float32 for later loss calculation
 
+logger = logging.getLogger(__name__)
+
 class PtychoModel(torch.nn.Module):
     """
     Main optimization class for ptychographic reconstruction using automatic differentiation (AD).
@@ -37,7 +39,6 @@ class PtychoModel(torch.nn.Module):
 
     Attributes:
         device (str): Device to run computations on ('cuda:0' by default).
-        verbose (bool): If True, prints model summary (True by default).
         detector_blur_std (float): Standard deviation for detector blur, or None if no blur.
         obj_preblur_std (float): Standard deviation for object pre-blur, or None if no pre-blur.
         lr_params (dict): Learning rate parameters for optimizable tensors.
@@ -65,18 +66,16 @@ class PtychoModel(torch.nn.Module):
         init_variables (dict): Dictionary of initial variables required for the model.
         model_params (dict): Dictionary of model parameters including learning rates and blur stds.
         device (str): Device to run computations on. Default is 'cuda:0'.
-        verbose (bool): If True, prints model summary. Default is True.
     """
 
-    def __init__(self, init_variables, model_params, device='cuda', verbose=True):
+    def __init__(self, init_variables, model_params, device='cuda'):
         super(PtychoModel, self).__init__()
         with torch.no_grad():
             
-            vprint('### Initializing PtychoModel model ###', verbose=verbose)
+            logger.info('### Initializing PtychoModel model ###')
             
             # Setup model behaviors
             self.device                 = device
-            self.verbose                = verbose
             self.detector_blur_std      = model_params['detector_blur_std']
             self.obj_preblur_std        = model_params['obj_preblur_std']
             self.preload_data           = model_params.get('preload_data', True)
@@ -145,7 +144,7 @@ class PtychoModel(torch.nn.Module):
                 'slice_thickness' : self.opt_slice_thickness,
                 'probe'           : self.opt_probe,
                 'probe_pos_shifts': self.opt_probe_pos_shifts}
-            self.create_optimizable_params_dict(self.lr_params, self.verbose)
+            self.create_optimizable_params_dict(self.lr_params)
 
             # Initialize propagator-related variables
             self.init_propagator_vars()
@@ -153,8 +152,8 @@ class PtychoModel(torch.nn.Module):
             # Initialize iteration numbers that require torch.compile
             self.init_compilation_iters()
             
-            vprint('### Done initializing PtychoModel model ###', verbose=verbose)
-            vprint(' ', verbose=verbose)
+            logger.info('### Done initializing PtychoModel model ###')
+            logger.info(' ')
             
     def get_complex_probe_view(self):
         """ Retrieve complex view of the probe """
@@ -196,7 +195,7 @@ class PtychoModel(torch.nn.Module):
         self.shift_probes_grid = torch.stack([kpy, kpx], dim=0) # (2,Npy,Npx), normalized k-space grid stack for sub-px probe shifting 
         self.shift_object_grid = torch.stack([koy, kox], dim=0) # (2,Noy,Nox), normalized k-space grid stack for sub-px object shifting (Implemented for completeness, not used in PtyRAD)
     
-    def create_optimizable_params_dict(self, lr_params, verbose=True):
+    def create_optimizable_params_dict(self, lr_params):
         """ Sets the optimizer with lr_params """
         # # Use this to edit learning rate if needed some refinement
 
@@ -216,8 +215,7 @@ class PtychoModel(torch.nn.Module):
                 self.optimizable_tensors[param_name].requires_grad = (lr != 0) and (self.start_iter[param_name] ==1) # Set requires_grad based on learning rate and start_iter
                 if lr != 0:
                     self.optimizable_params.append({'params': [self.optimizable_tensors[param_name]], 'lr': lr})               
-        if verbose:
-            self.print_model_summary()
+        self.print_model_summary()
 
     def init_propagator_vars(self):
         """ Initialize propagator related variables """
@@ -256,30 +254,29 @@ class PtychoModel(torch.nn.Module):
         
     def print_model_summary(self):
         """ Prints a summary of the model's optimizable variables and statistics. """
-        # Set all the print as vprint so that it'll only print once in DDP, the actual `if verbose` is set outside of the function
-        vprint('### PtychoModel optimizable variables ###')
+        logger.info('### PtychoModel optimizable variables ###')
         for name, tensor in self.optimizable_tensors.items():
-            vprint(f"{name.ljust(16)}: {str(tensor.shape).ljust(32)}, {str(tensor.dtype).ljust(16)}, device:{tensor.device}, grad:{str(tensor.requires_grad).ljust(5)}, lr:{self.lr_params[name]:.0e}")
+            logger.info(f"{name.ljust(16)}: {str(tensor.shape).ljust(32)}, {str(tensor.dtype).ljust(16)}, device:{tensor.device}, grad:{str(tensor.requires_grad).ljust(5)}, lr:{self.lr_params[name]:.0e}")
         total_var = sum(tensor.numel() for _, tensor in self.optimizable_tensors.items() if tensor.requires_grad)
         # When you create a new model, make sure to pass the optimizer_params to optimizer using "optimizer = torch.optim.Adam(model.optimizer_params)"
-        vprint(" ")        
+        logger.info(" ")        
         
-        vprint('### Optimizable variables statitsics ###')
-        vprint(f"Total measurement values  : {self.meas_loader.meas_arr.size:,d}")
-        vprint(f"Total optimizing variables: {total_var:,d}")
-        vprint(f"Overdetermined ratio      : {self.meas_loader.meas_arr.size/total_var:.2f}")
-        vprint(" ")
+        logger.info('### Optimizable variables statitsics ###')
+        logger.info(f"Total measurement values  : {self.meas_loader.meas_arr.size:,d}")
+        logger.info(f"Total optimizing variables: {total_var:,d}")
+        logger.info(f"Overdetermined ratio      : {self.meas_loader.meas_arr.size/total_var:.2f}")
+        logger.info(" ")
         
-        vprint('### Model behavior ###')
-        vprint(f"Obj preblur               : {True if self.obj_preblur_std is not None else False}")
-        vprint(f"Tilt propagator           : {self.tilt_obj}")
-        vprint(f"Change slice thickness    : {self.change_thickness}")
-        vprint(f"Sub-px probe shift        : {self.shift_probes}")
-        vprint(f"Detector blur             : {True if self.detector_blur_std is not None else False}")
-        vprint(f"Preload data              : {self.preload_data}")
-        vprint(f"On-the-fly meas padding   : {True if self.meas_loader.meas_padded is not None else False}")
-        vprint(f"On-the-fly meas resample  : {True if self.meas_loader.meas_scale_factors is not None else False}")
-        vprint(" ")
+        logger.info('### Model behavior ###')
+        logger.info(f"Obj preblur               : {True if self.obj_preblur_std is not None else False}")
+        logger.info(f"Tilt propagator           : {self.tilt_obj}")
+        logger.info(f"Change slice thickness    : {self.change_thickness}")
+        logger.info(f"Sub-px probe shift        : {self.shift_probes}")
+        logger.info(f"Detector blur             : {True if self.detector_blur_std is not None else False}")
+        logger.info(f"Preload data              : {self.preload_data}")
+        logger.info(f"On-the-fly meas padding   : {True if self.meas_loader.meas_padded is not None else False}")
+        logger.info(f"On-the-fly meas resample  : {True if self.meas_loader.meas_scale_factors is not None else False}")
+        logger.info(" ")
     
     def get_obj_ROI(self, indices):
         """ Get object ROI with integer coordinates """

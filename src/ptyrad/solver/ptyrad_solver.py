@@ -14,12 +14,13 @@ from ptyrad.core import CombinedConstraint, CombinedLoss, PtychoModel
 from ptyrad.init import Initializer
 from ptyrad.io.dataloader import IndicesDataset
 from ptyrad.params.parser import copy_params_to_dir
-from ptyrad.runtime.logging import vprint
 from ptyrad.utils.time import get_time, parse_sec_to_time_str
+from ptyrad.runtime.logging import get_logging_manager
 
 from .hypertune import create_optuna_pruner, create_optuna_sampler, optuna_objective
 from .reconstruction import create_optimizer, prepare_recon, recon_loop, time_sync
 
+logger = logging.getLogger(__name__)
 
 class PtyRADSolver(object):
     """
@@ -35,78 +36,73 @@ class PtyRADSolver(object):
             hyperparameter tuning.
         if_hypertune (bool): A flag to indicate whether hyperparameter tuning should 
             be performed instead of regular reconstruction. Defaults to False.
-        verbose (bool): A flag to control the verbosity of the output. Defaults to True unless
-            if_quiet is set to True.
         device (str): The device to run the computations on (e.g., 'cuda' for GPU, 'cpu' for CPU). 
             Defaults to None to let `accelerate` automatically decide.
     """
-    def __init__(self, params, device=None, seed=None, acc=None, logger=None):
+    def __init__(self, params, device=None, seed=None, acc=None):
         self.params          = deepcopy(params)
         self.if_hypertune    = self.params.get('hypertune_params', {}).get('if_hypertune', False)
-        self.verbose         = not self.params['recon_params']['if_quiet']
         self.accelerator     = acc
         self.use_acc_device  = device is None and acc is not None
         self.device          = self.accelerator.device if self.use_acc_device else device
         self.random_seed     = seed
-        self.logger          = logger
         
         # model and optimizer are instantiate inside reconstruct() and hypertune()
         self.init_initializer()
         self.init_loss()
         self.init_constraint()
-        vprint("### Done initializing PtyRADSolver ###")
-        vprint(" ")
+        logger.info("### Done initializing PtyRADSolver ###")
+        logger.info(" ")
     
     def init_initializer(self):
         """Initializes the variables and objects needed for the reconstruction process."""
         # These components are organized into individual methods so we can re-initialize some of them if needed 
-        vprint("### Initializing Initializer ###")
+        logger.info("### Initializing Initializer ###")
         self.init          = Initializer(self.params['init_params'], seed=self.random_seed).init_all()
-        vprint(" ")
+        logger.info(" ")
 
     def init_loss(self):
         """Initializes the loss function using the provided parameters."""
-        vprint("### Initializing loss function ###")
+        logger.info("### Initializing loss function ###")
         loss_params = self.params['loss_params']
         
         # Print loss params
-        vprint("Active loss types:")
+        logger.info("Active loss types:")
         for key, value in loss_params.items():
             if value.get('state', False):
-                vprint(f"  {key.ljust(12)}: {value}")
+                logger.info(f"  {key.ljust(12)}: {value}")
                 
         self.loss_fn       = CombinedLoss(loss_params, device=self.device)
-        vprint(" ")
+        logger.info(" ")
 
     def init_constraint(self):
         """Initializes the constraint function using the provided parameters."""
-        vprint("### Initializing constraint function ###")
+        logger.info("### Initializing constraint function ###")
         constraint_params = self.params['constraint_params']
 
         # Print constraint params
-        vprint("Active constraint types:")
+        logger.info("Active constraint types:")
         for key, value in constraint_params.items():
             if value.get('start_iter', None) is not None:
-                vprint(f"  {key.ljust(14)}: {value}")
+                logger.info(f"  {key.ljust(14)}: {value}")
                 
-        self.constraint_fn = CombinedConstraint(constraint_params, device=self.device, verbose=self.verbose)
-        vprint(" ")
+        self.constraint_fn = CombinedConstraint(constraint_params, device=self.device)
+        logger.info(" ")
         
     def reconstruct(self):
         """Executes the ptychographic reconstruction process by creating the model, 
             optimizer, and running the reconstruction loop."""
         params = self.params
         device = self.device
-        logger = self.logger
         
         # Create the model and optimizer, prepare indices, batches, and output_path
-        model         = PtychoModel(self.init.init_variables, params['model_params'], device=device, verbose=self.verbose)
+        model         = PtychoModel(self.init.init_variables, params['model_params'], device=device)
         optimizer     = create_optimizer(model.optimizer_params, model.optimizable_params)
         indices, batches, output_path = prepare_recon(model, self.init, params)
         
         # Handle LBFGS incompatibility
         if params['model_params']['optimizer_params']['name'] == 'LBFGS' and self.accelerator.num_processes >1:
-            vprint(f"WARNING: Optimizer 'LBFGS' is not supported for multiGPU mode (accelerator.num_processes = {self.accelerator.num_processes}), switch to default optimizer 'Adam'")
+            logger.warning(f"Optimizer 'LBFGS' is not supported for multiGPU mode (accelerator.num_processes = {self.accelerator.num_processes}), switch to default optimizer 'Adam'")
             params['model_params']['optimizer_params']['name'] = 'Adam'
             model.optimizer_params['name'] = 'Adam'
             optimizer     = create_optimizer(model.optimizer_params, model.optimizable_params)
@@ -117,9 +113,11 @@ class PtyRADSolver(object):
             dataloader = DataLoader(ordered_indices, batch_size = params['recon_params']['BATCH_SIZE']['size'], shuffle=False) # This will do the batching sequentially
             batches = self.accelerator.prepare(dataloader) # Note that `batches` is replaced by a DataLoader (accelerate mode) that is also an iterable object
             model, optimizer = self.accelerator.prepare(model, optimizer)
-            
-        if logger is not None and logger.flush_file:
-            logger.flush_to_file(log_dir=output_path) # Note that output_path can be None, and there's an internal flag of self.flush_file controls the actual file creation
+        
+        # Look for the logging manager and trigger the flush
+        logging_manager = get_logging_manager()
+        if logging_manager:
+            logging_manager.flush_to_file(log_dir=output_path) # Note that output_path can be None, and there's an internal flag of self.flush_file controls the actual file creation       
 
         recon_loop(model, self.init, params, optimizer, self.loss_fn, self.constraint_fn, indices, batches, output_path, acc=self.accelerator)
         self.reconstruct_results = model
@@ -139,20 +137,19 @@ class PtyRADSolver(object):
         error_metric     = hypertune_params['error_metric']
         sampler          = create_optuna_sampler(sampler_params)
         pruner           = create_optuna_pruner(pruner_params)
-        logger           = self.logger
         
         # Print hypertune params
-        vprint("### Hypertune params ###")
+        logger.info("### Hypertune params ###")
         for key, value in hypertune_params.items():
 
             if key == 'tune_params':  # Check if 'tune_params' exists
-                vprint("Active tune_params:")
+                logger.info("Active tune_params:")
                 for param, param_config in value.items():
                     if param_config.get('state', False):  # Print only if 'state' is True
-                        vprint(f"    {param.ljust(12)}: {param_config}")
+                        logger.info(f"    {param.ljust(12)}: {param_config}")
             else:
-                vprint(f"{key.ljust(16)}: {value}")
-        vprint(" ")
+                logger.info(f"{key.ljust(16)}: {value}")
+        logger.info(" ")
         
         # Check error metric validity
         valid_metrics = {"contrast", "loss"}
@@ -172,9 +169,11 @@ class PtyRADSolver(object):
         for handler in optuna_logger.handlers:
             if isinstance(handler, logging.StreamHandler):  # StreamHandler is the console handler
                 optuna_logger.removeHandler(handler)
-        # Redirect Optuna's logger to custom logger
-        optuna_logger.addHandler(logger.buffer_handler)
-        optuna_logger.addHandler(logger.console_handler)
+        # Redirect Optuna's logger to LoggingManager
+        logging_manager = get_logging_manager()
+        if logging_manager:
+            optuna_logger.addHandler(logging_manager.buffer_handler)
+            optuna_logger.addHandler(logging_manager.console_handler)
                 
         # Create a study object and optimize the objective function
         study = optuna.create_study(
@@ -209,18 +208,28 @@ class PtyRADSolver(object):
         # Set output_dir to None if the user doesn't want to create the output_dir at all
         if not copy_params and self.params['recon_params']['SAVE_ITERS'] is None and not hypertune_params['collate_results']:
             output_dir = None
-            
-        if logger is not None and logger.flush_file:
-            logger.flush_to_file(log_dir=output_dir) # Note that there's an internal flag of self.flush_file controls the actual file creation
-            optuna_logger.addHandler(logger.file_handler)
+
+        # Look for the logging manager and trigger the flush
+        if logging_manager:
+            logging_manager.flush_to_file(log_dir=output_dir) # Note that there's an internal flag of self.flush_file controls the actual file creation
+            optuna_logger.addHandler(logging_manager.file_handler)
         
-        study.optimize(lambda trial: optuna_objective(trial, self.params, self.init, self.loss_fn, self.constraint_fn, self.device, self.verbose), 
+        # Temporarily slicence the logger 
+        ptyrad_logger = logging.getLogger('ptyrad')
+        original_level = ptyrad_logger.level # Save the current state (usually DEBUG or INFO)
+        ptyrad_logger.setLevel(logging.WARNING)
+        
+        study.optimize(lambda trial: optuna_objective(trial, self.params, self.init, self.loss_fn, self.constraint_fn, self.device), 
                        n_trials=n_trials,
                        timeout=timeout)
-        vprint(f"Hypertune study is finished due to either (1) n_trials = {n_trials} or (2) study timeout = {timeout} sec has reached")
-        vprint("Best hypertune params:")
+        
+        # Turn back on the volume of the logger
+        ptyrad_logger.setLevel(original_level)
+        
+        logger.info(f"Hypertune study is finished due to either (1) n_trials = {n_trials} or (2) study timeout = {timeout} sec has reached")
+        logger.info("Best hypertune params:")
         for key, value in study.best_params.items():
-            vprint(f"\t{key}: {value}")
+            logger.info(f"\t{key}: {value}")
     
     # Wrapper function to run either "reconstruction" or "hypertune" modes    
     def run(self):
@@ -229,8 +238,8 @@ class PtyRADSolver(object):
         start_t = time_sync()
         solver_mode = 'hypertune' if self.if_hypertune else 'reconstruct'
         
-        vprint(f"### Starting the PtyRADSolver in {solver_mode} mode ###")
-        vprint(" ")
+        logger.info(f"### Starting the PtyRADSolver in {solver_mode} mode ###")
+        logger.info(" ")
         
         if self.if_hypertune:
             self.hypertune()
@@ -240,11 +249,13 @@ class PtyRADSolver(object):
         solver_t = end_t - start_t
         time_str = "" if solver_t < 60 else f", or {parse_sec_to_time_str(solver_t)}"
         
-        vprint(f"### The PtyRADSolver is finished in {solver_t:.3f} sec{time_str} ###")
-        vprint(" ")
-        if self.logger is not None and self.logger.flush_file:
-            self.logger.close()
+        logger.info(f"### The PtyRADSolver is finished in {solver_t:.3f} sec{time_str} ###")
+        logger.info(" ")
         
+        logging_manager = get_logging_manager()
+        if logging_manager and logging_manager.flush_file:
+            logging_manager.close()
+
         # End the process properly when in DDP mode
         if dist.is_initialized():
             dist.destroy_process_group()

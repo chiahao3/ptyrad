@@ -3,6 +3,7 @@ Hypertune / Optuna related functions
 
 """
 
+import logging
 from copy import deepcopy
 from random import shuffle
 
@@ -14,7 +15,6 @@ from ptyrad.core.losses import get_objp_contrast
 from ptyrad.io.save import save_results
 from ptyrad.optics.aberrations import Aberrations
 from ptyrad.plotting.model import plot_summary
-from ptyrad.runtime.logging import vprint
 from ptyrad.runtime.seed import set_random_seed
 
 from .reconstruction import (
@@ -25,11 +25,13 @@ from .reconstruction import (
     toggle_grad_requires,
 )
 
+logger = logging.getLogger(__name__)
+
 # ==============================================================================
 # SECTION 1: OPTUNA SETUP
 # ==============================================================================
     
-def create_optuna_sampler(sampler_params, verbose=True):
+def create_optuna_sampler(sampler_params):
     # Note that this function supports all Optuna samplers except "PartialFixedSampler" because it requires a sequential sampler setup
     # Different samplers have different available configurations so please refer to https://optuna.readthedocs.io/en/stable/reference/samplers/index.html for more details
     # For example, GridSampler would need to pass in the 'search_space' so you need to explicitly specify every target variable range in 'sampler_params' : {'name': GridSampler, 'configs': {'search_space': {'optimizer': ['Adam', 'AdamW', 'RMSprop'], 'batch_size': [16,24,32,64,128,256,512], 'oalr': [1.0e-4, 1.0e-3, 1.0e-2], 'oplr': [1.0e-4, 1.0e-3, 1.0e-2]}}}
@@ -43,7 +45,7 @@ def create_optuna_sampler(sampler_params, verbose=True):
     sampler_name = sampler_params['name']
     sampler_configs = sampler_params.get('configs') or {} # if "None" is provided or missing, it'll default an empty dict {}
     
-    vprint(f"### Creating Optuna '{sampler_name}' sampler with configs = {sampler_configs} ###", verbose=verbose)
+    logger.info(f"### Creating Optuna '{sampler_name}' sampler with configs = {sampler_configs} ###")
     
     # Get the optimizer class from optuna.samplers
     sampler_class = getattr(optuna.samplers, sampler_name, None)
@@ -53,10 +55,10 @@ def create_optuna_sampler(sampler_params, verbose=True):
 
     sampler = sampler_class(**sampler_configs)
 
-    vprint(" ", verbose=verbose)
+    logger.info(" ")
     return sampler
 
-def create_optuna_pruner(pruner_params, verbose=True):
+def create_optuna_pruner(pruner_params):
     # Note that this function supports all Optuna pruners except "WilcoxonPruner" because it requires a nested evaluation setup
     # Different pruners have different available configurations so please refer to https://optuna.readthedocs.io/en/stable/reference/pruners.html for more details
     # PatientPruner and PercentilePruner have required fields that need to be passed in with 'configs'
@@ -77,7 +79,7 @@ def create_optuna_pruner(pruner_params, verbose=True):
         pruner_name = pruner_params['name']
         pruner_configs = pruner_params.get('configs') or {} # if "None" is provided or missing, it'll default an empty dict {}
         
-        vprint(f"### Creating Optuna '{pruner_name}' pruner with configs = {pruner_configs} ###", verbose=verbose)
+        logger.info(f"### Creating Optuna '{pruner_name}' pruner with configs = {pruner_configs} ###")
         
         # Get the pruner class from optuna.pruners
         pruner_class = getattr(optuna.pruners, pruner_name, None)
@@ -87,20 +89,20 @@ def create_optuna_pruner(pruner_params, verbose=True):
         elif pruner_name == 'NopPruner':
             raise ValueError("Optuna NopPruner is an empty pruner, please set pruner_params = None if you don't want to prune.")
         elif pruner_name == 'PatientPruner':
-            wrapped_pruner = create_optuna_pruner(pruner_configs['wrapped_pruner_configs'], verbose=verbose)
+            wrapped_pruner = create_optuna_pruner(pruner_configs['wrapped_pruner_configs'])
             pruner_configs.pop('wrapped_pruner_configs', None) # Delete the wrapped_pruner_configs
             pruner = pruner_class(wrapped_pruner, **pruner_configs)
         else:
             pruner = pruner_class(**pruner_configs)
 
-        vprint(" ", verbose=verbose)
+        logger.info(" ")
         return pruner
 
 # ==============================================================================
 # SECTION 2: OPTIMIZATION OBJECTIVE
 # ==============================================================================
 
-def optuna_objective(trial, params, init, loss_fn, constraint_fn, device='cuda', verbose=False):
+def optuna_objective(trial, params, init, loss_fn, constraint_fn, device='cuda'):
     """
     Objective function for Optuna hyperparameter tuning in ptychographic reconstruction.
 
@@ -120,7 +122,6 @@ def optuna_objective(trial, params, init, loss_fn, constraint_fn, device='cuda',
         constraint_fn (CombinedConstraint): The constraint function object that applies constraints 
             during optimization.
         device (str, optional): The device to run the reconstruction on, e.g., 'cuda'. Defaults to 'cuda'.
-        verbose (bool, optional): If True, enables verbose output. Defaults to False.
 
     Returns:
         float: The total loss for the final iteration of the reconstruction process, used by Optuna 
@@ -132,7 +133,6 @@ def optuna_objective(trial, params, init, loss_fn, constraint_fn, device='cuda',
     """
     import optuna
     
-    init.verbose = verbose # This would affect the initialization printing for each hypertune trials
     params = deepcopy(params)
     
     # ==============================================================================
@@ -285,31 +285,31 @@ def optuna_objective(trial, params, init, loss_fn, constraint_fn, device='cuda',
     # ==============================================================================
    
     # Create the model and optimizer, prepare indices, batches, and output_path
-    model         = PtychoModel(init.init_variables, params['model_params'], device=device, verbose=verbose)
-    optimizer     = create_optimizer(model.optimizer_params, model.optimizable_params, verbose=verbose)
+    model         = PtychoModel(init.init_variables, params['model_params'], device=device)
+    optimizer     = create_optimizer(model.optimizer_params, model.optimizable_params)
     indices, batches, output_path = prepare_recon(model, init, params)
       
     # Optimization loop
     for niter in range(1, NITER+1):
         
         # Toggle the grad calculation to enable or disable AD update on tensors at certain iterations
-        toggle_grad_requires(model, niter, verbose)
+        toggle_grad_requires(model, niter)
         
         # Apply torch.compile to `recon_step``
         if niter in model.compilation_iters: # compilation_iters always contain niter=1
-            vprint(f"Setting up PyTorch compiler with {compiler_configs}", verbose=verbose)
+            logger.info(f"Setting up PyTorch compiler with {compiler_configs}")
             torch._dynamo.reset()
             recon_step_compiled = torch.compile(recon_step, **compiler_configs)
         
         if model.random_seed is not None:
             set_random_seed(seed=model.random_seed + niter) # This ensures the batches order are different for each iter in a reproducible way
         shuffle(batches)
-        batch_losses = recon_step_compiled(batches, grad_accumulation, model, optimizer, loss_fn, constraint_fn, niter, verbose=verbose)
+        batch_losses = recon_step_compiled(batches, grad_accumulation, model, optimizer, loss_fn, constraint_fn, niter)
 
         ## Saving intermediate results
         if SAVE_ITERS is not None and niter % SAVE_ITERS == 0:
             save_results(output_path, model, params, optimizer, niter, indices, batch_losses, collate_str='')
-            plot_summary(output_path, model, niter, indices, init.init_variables, selected_figs=selected_figs, collate_str='', show_fig=False, save_fig=True, verbose=verbose)
+            plot_summary(output_path, model, niter, indices, init.init_variables, selected_figs=selected_figs, collate_str='', show_fig=False, save_fig=True)
                
         ## Pruning logic for optuna
         if hypertune_params['pruner_params'] is not None:
@@ -324,7 +324,7 @@ def optuna_objective(trial, params, init, loss_fn, constraint_fn, device='cuda',
                 collate_str = f"_error_{optuna_error:.5f}_{trial_id}{params_str}"
                 if collate_results:
                     save_results(output_dir, model, params, optimizer, niter, indices, batch_losses, collate_str=collate_str)
-                    plot_summary(output_dir, model, niter, indices, init.init_variables, selected_figs=selected_figs, collate_str=collate_str, show_fig=False, save_fig=True, verbose=verbose)
+                    plot_summary(output_dir, model, niter, indices, init.init_variables, selected_figs=selected_figs, collate_str=collate_str, show_fig=False, save_fig=True)
                 raise optuna.exceptions.TrialPruned()
 
     ## Final optuna_error evaluation (only needed if pruner never ran)
@@ -336,10 +336,10 @@ def optuna_objective(trial, params, init, loss_fn, constraint_fn, device='cuda',
     collate_str = f"_error_{optuna_error:.5f}_{trial_id}{params_str}"
     if collate_results:
         save_results(output_dir, model, params, optimizer, niter, indices, batch_losses, collate_str=collate_str)
-        plot_summary(output_dir, model, niter, indices, init.init_variables, selected_figs=selected_figs, collate_str=collate_str, show_fig=False, save_fig=True, verbose=verbose)
+        plot_summary(output_dir, model, niter, indices, init.init_variables, selected_figs=selected_figs, collate_str=collate_str, show_fig=False, save_fig=True)
     
-    vprint(f"### Finished {NITER} iterations, averaged iter_t = {np.mean(model.iter_times):.3g} sec ###", verbose=verbose)
-    vprint(" ", verbose=verbose)
+    logger.info(f"### Finished {NITER} iterations, averaged iter_t = {np.mean(model.iter_times):.3g} sec ###")
+    logger.info(" ")
     return optuna_error
 
 # ==============================================================================

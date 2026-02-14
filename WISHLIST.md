@@ -1,20 +1,13 @@
 # New Features and Enhancements
 
 
-Last Update: 2026.02.13
+Last Update: 2026.02.14
 
 ---
 
 ### User Interface
 
 - Consider a GUI for easier operation
-
-### Logging
-
-- Rebuild `logger` logic and improve `vprint`
-  - Don't use vprint on everything
-  - Peripheral functions should be silent, do the logging only inside the solver context
-  - Would need to canocalize the logger usage, if possible, split the rank logic with logger, and only decorate the logger if needed
 
 ### Simulator
 

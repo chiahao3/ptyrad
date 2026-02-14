@@ -11,7 +11,7 @@ from ptyrad.params import load_params
 from ptyrad.solver import PtyRADSolver
 from ptyrad.utils import print_system_info, set_gpu_device, CustomLogger
 
-logger = CustomLogger(log_file='ptyrad_log.txt', log_dir='auto', prefix_time='datetime', show_timestamp=True)
+LoggingManager(log_file='ptyrad_log.txt', log_dir='auto', prefix_time='datetime', show_timestamp=True)
 
 params_path = "params/tBL_WSe2_reconstruct.yml"
 

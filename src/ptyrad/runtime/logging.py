@@ -2,27 +2,74 @@ import io
 import logging
 import os
 import warnings
-
-import torch
-import torch.distributed as dist
+from typing import Literal
 
 from ptyrad.utils.time import get_time
 
+# A module-level variable to store our "Recording Engineer"
+_active_manager = None
 
-@torch.compiler.disable
-def vprint(*args, verbose=True, **kwargs):
-    """Verbose print/logging with individual control, only for rank 0 in DDP."""
-    if verbose and (not dist.is_available() or not dist.is_initialized() or dist.get_rank() == 0):
-        logger = logging.getLogger('PtyRAD')
-        if logger.hasHandlers():
-            logger.info(' '.join(map(str, args)), **kwargs)
-        else:
-            print(*args, **kwargs)
+VERBOSITY_MAPPING = {'DEBUG': logging.DEBUG,
+                    'INFO': logging.INFO,
+                    'WARNING': logging.WARNING,
+                    'ERROR': logging.ERROR,
+                    'CRITICAL': logging.CRITICAL}
 
-class CustomLogger:
-    def __init__(self, log_file='ptyrad_log.txt', log_dir='auto', prefix_time='datetime', prefix_date=None, prefix_jobid=0, append_to_file=True, show_timestamp=True, **kwargs):
-        self.logger = logging.getLogger('PtyRAD')
-        self.logger.setLevel(logging.INFO)
+def report(message, verbosity: Literal['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'] = 'INFO'):
+    """
+    Dual purpose print / log, ensures output reaches the user even if they haven't initialized PtyRAD logging.
+    
+    This report function is used exclusively for diagnostic functions like print_system_info, print_gpu_info, etc.
+    """
+    target_level = VERBOSITY_MAPPING.get(verbosity, logging.INFO)
+    logger = logging.getLogger('ptyrad')
+    
+    # 1. Emit to the logger hierarchy
+    logger.log(level=target_level, msg=message)
+    
+    # 2. The Bulletproof Check:
+    # We fallback to print() ONLY if:
+    # a) There are no handlers at all (Newbie mode)
+    # OR 
+    # b) Handlers exist, but the current logger level is too high to show this message
+    #    (e.g., user set level to ERROR, but we are reporting vital system INFO)
+    
+    has_handlers = logger.hasHandlers() or logging.getLogger().hasHandlers()
+    is_enabled = logger.isEnabledFor(target_level)
+
+    if not has_handlers or not is_enabled:
+        # Fallback to standard print so the human actually sees the diagnostic
+        print(message)
+
+def get_logging_manager():
+    """Access the manager from anywhere in the library."""
+    return _active_manager
+
+class RankZeroFilter(logging.Filter):
+    def filter(self, record):
+        import sys
+        # Only check rank if torch is already loaded in memory
+        if 'torch' in sys.modules:
+            import torch.distributed as dist
+            if dist.is_available() and dist.is_initialized():
+                return dist.get_rank() == 0
+        return True
+
+class LoggingManager:
+    def __init__(self, 
+                 log_file='ptyrad_log.txt', 
+                 log_dir='auto', 
+                 prefix_time='datetime', 
+                 prefix_date=None, 
+                 prefix_jobid=0, 
+                 append_to_file=True, 
+                 show_timestamp=True,
+                 show_config=True, 
+                 verbosity: Literal['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'] = 'DEBUG', **kwargs):
+        global _active_manager
+        _active_manager = self # Register this instance as the active one
+        self.logger = logging.getLogger('ptyrad')
+        self.logger.setLevel(VERBOSITY_MAPPING[verbosity])
         
         # Clear all existing handlers to re-instantiate the logger
         if self.logger.hasHandlers():
@@ -47,6 +94,7 @@ class CustomLogger:
 
         # Create console handler
         self.console_handler = logging.StreamHandler()
+        self.console_handler.addFilter(RankZeroFilter())
         self.console_handler.setLevel(logging.INFO)
         formatter = logging.Formatter('%(asctime)s - %(message)s' if show_timestamp else '%(message)s')
         self.console_handler.setFormatter(formatter)
@@ -54,6 +102,7 @@ class CustomLogger:
         # Create a buffer for file logs
         self.log_buffer = io.StringIO()
         self.buffer_handler = logging.StreamHandler(self.log_buffer)
+        self.buffer_handler.addFilter(RankZeroFilter())
         self.buffer_handler.setLevel(logging.INFO)
         self.buffer_handler.setFormatter(formatter)
 
@@ -61,16 +110,20 @@ class CustomLogger:
         self.logger.addHandler(self.console_handler)
         self.logger.addHandler(self.buffer_handler)
         
-        # Print logger information
-        vprint("### PtyRAD Logger configuration ###")
-        vprint(f"log_file       = '{self.log_file}'. If log_file = None, no log file will be created.")
-        vprint(f"log_dir        = '{self.log_dir}'. If log_dir = 'auto', then log will be saved to `output_path` or 'logs/'.")
-        vprint(f"flush_file     = {self.flush_file}. Automatically set to True if `log_file is not None`")
-        vprint(f"prefix_time    = {self.prefix_time}. If true, preset strings ('date', 'time', 'datetime'), or a string of time format, a datetime str is prefixed to the `log_file`.")
-        vprint(f"prefix_jobid   = '{self.prefix_jobid}'. If not 0, it'll be prefixed to the log file. This is used for hypertune mode with multiple GPUs.")
-        vprint(f"append_to_file = {self.append_to_file}. If true, logs will be appended to the existing file. If false, the log file will be overwritten.")
-        vprint(f"show_timestamp = {self.show_timestamp}. If true, the printed information will contain a timestamp.")
-        vprint(' ')
+        # Print logger information, these will take effect immediately after attaching handlers
+        if show_config:
+            self._show_manager_config()
+
+    def _show_manager_config(self):
+        self.logger.info("### PtyRAD LoggingManager configuration ###")
+        self.logger.info(f"log_file       = '{self.log_file}'. If log_file = None, no log file will be created.")
+        self.logger.info(f"log_dir        = '{self.log_dir}'. If log_dir = 'auto', then log will be saved to `output_path` or 'logs/'.")
+        self.logger.info(f"flush_file     = {self.flush_file}. Automatically set to True if `log_file is not None`")
+        self.logger.info(f"prefix_time    = {self.prefix_time}. If true, preset strings ('date', 'time', 'datetime'), or a string of time format, a datetime str is prefixed to the `log_file`.")
+        self.logger.info(f"prefix_jobid   = '{self.prefix_jobid}'. If not 0, it'll be prefixed to the log file. This is used for hypertune mode with multiple GPUs.")
+        self.logger.info(f"append_to_file = {self.append_to_file}. If true, logs will be appended to the existing file. If false, the log file will be overwritten.")
+        self.logger.info(f"show_timestamp = {self.show_timestamp}. If true, the printed information will contain a timestamp.")
+        self.logger.info(' ')        
 
     def flush_to_file(self, log_dir=None, append_to_file=None):
         """
@@ -112,7 +165,7 @@ class CustomLogger:
                 with open(log_file_path, file_mode, encoding="utf-8") as f:
                     f.write(self.log_buffer.getvalue())
             except UnicodeEncodeError as e:
-                vprint(f"[WARNING] Failed to write log due to Unicode issue: {e}")
+                self.logger.warning(f"Failed to write log due to Unicode issue: {e}")
                 with open(log_file_path, file_mode, encoding="ascii", errors="replace") as f:
                     f.write(self.log_buffer.getvalue())
 
@@ -124,11 +177,11 @@ class CustomLogger:
             self.file_handler = logging.FileHandler(log_file_path, mode='a')  # Always append after initial flush
             self.file_handler.setFormatter(logging.Formatter('%(asctime)s - %(message)s' if show_timestamp else '%(message)s'))
             self.logger.addHandler(self.file_handler)
-            vprint(f"### Log file is flushed (created) as {log_file_path} ###")
+            self.logger.info(f"### Log file is flushed (created) as {log_file_path} ###")
         else:
             self.file_handler = None
-            vprint(f"### Log file is not flushed (created) because log_file is set to {self.log_file} ###")
-        vprint(' ')
+            self.logger.warning(f"### Log file is not flushed (created) because log_file is set to {self.log_file} ###")
+        self.logger.info(' ')
         
     def close(self):
         """Closes the file handler if it exists."""

@@ -3,6 +3,8 @@ Physical constraints that directly modify optimizable tensors with specified int
 
 """
 
+import logging
+
 import torch
 from torch.fft import fft2, fftfreq, fftn, ifft2, ifftn
 from torch.nn.functional import interpolate
@@ -18,8 +20,8 @@ from ptyrad.core.functional import (
     make_sigmoid_mask,
     near_field_evolution_torch,
 )
-from ptyrad.runtime.logging import vprint
 
+logger = logging.getLogger(__name__)
 
 @torch.compiler.disable # TorchRuntimeError: Dynamo failed to run FX node with fake tensors: call_function <Wrapped method <original sub>>(*(FakeTensor(..., size=(5,), dtype=torch.float64), 2.0), **{}): got AttributeError("'ndarray' object has no attribute 'sub'")
 class CombinedConstraint(torch.nn.Module):
@@ -34,13 +36,11 @@ class CombinedConstraint(torch.nn.Module):
         constraint_params (dict): A dictionary containing the configuration for each constraint. Each constraint should have a 
             frequency and other parameters necessary for its application.
         device (str, optional): The device on which the tensors are located (e.g., 'cuda' or 'cpu'). Defaults to 'cuda'.
-        verbose (bool, optional): If True, prints messages during the application of constraints. Defaults to True.
     """
-    def __init__(self, constraint_params, device='cuda', verbose=True):
+    def __init__(self, constraint_params, device='cuda'):
         super(CombinedConstraint, self).__init__()
         self.device = device
         self.constraint_params = constraint_params
-        self.verbose = verbose
 
     def _should_apply_at_iter(self, constraint_name, niter):
         """Check if the constraint should be applied at the current iteration."""
@@ -63,7 +63,7 @@ class CombinedConstraint(torch.nn.Module):
             model.opt_probe.data = torch.view_as_real(orthogonalize_modes_vec(model.get_complex_probe_view(), sort=True).contiguous()) # Note that model stores the complex probe as a (pmode, Ny, Nx, 2) float tensor (real view) so we need to do some real-complex view conversion.
             probe_int = model.get_complex_probe_view().abs().pow(2)
             probe_pow = (probe_int.sum((1,2))/probe_int.sum()).detach().cpu().numpy().round(3)
-            vprint(f"Apply ortho pmode constraint at iter {niter}, relative pmode power = {probe_pow}, probe int sum = {probe_int.sum():.4f}", verbose=self.verbose)
+            logger.info(f"Apply ortho pmode constraint at iter {niter}, relative pmode power = {probe_pow}, probe int sum = {probe_int.sum():.4f}")
 
     def apply_probe_mask_k(self, model, niter):
         ''' Apply probe amplitude constraint in Fourier space '''
@@ -90,7 +90,7 @@ class CombinedConstraint(torch.nn.Module):
             probe_int = model.get_complex_probe_view().abs().pow(2)
             # Re-sort the probe modes, note that the masked strong modes might be swapping order with unmasked weak modes
             model.opt_probe.data = torch.view_as_real(sort_by_mode_int(probe_r))
-            vprint(f"Apply Fourier-space probe amplitude constraint at iter {niter}, pmode_index = {pmode_index} when power_thresh = {power_thresh}, probe int sum = {probe_int.sum():.4f}", verbose=self.verbose)
+            logger.info(f"Apply Fourier-space probe amplitude constraint at iter {niter}, pmode_index = {pmode_index} when power_thresh = {power_thresh}, probe int sum = {probe_int.sum():.4f}")
     
     def apply_fix_probe_int(self, model, niter):
         ''' Apply probe intensity constraint '''
@@ -103,7 +103,7 @@ class CombinedConstraint(torch.nn.Module):
             target_amp  = model.probe_int_sum**0.5   
             model.opt_probe.data = torch.view_as_real(probe * target_amp/current_amp)
             probe_int = model.get_complex_probe_view().abs().pow(2)
-            vprint(f"Apply fix probe int constraint at iter {niter}, probe int sum = {probe_int.sum():.4f}", verbose=self.verbose)
+            logger.info(f"Apply fix probe int constraint at iter {niter}, probe int sum = {probe_int.sum():.4f}")
             
     def apply_obj_rblur(self, model, niter):
         ''' Apply Gaussian blur to object, this only applies to the last 2 dimension (...,H,W) '''
@@ -117,10 +117,10 @@ class CombinedConstraint(torch.nn.Module):
             
             if obj_type in ['amplitude', 'both']:
                 model.opt_obja.data = gaussian_blur(model.opt_obja, kernel_size=obj_rblur_ks, sigma=obj_rblur_std)
-                vprint(f"Apply lateral (y,x) Gaussian blur with std = {obj_rblur_std} px on obja at iter {niter}", verbose=self.verbose)
+                logger.info(f"Apply lateral (y,x) Gaussian blur with std = {obj_rblur_std} px on obja at iter {niter}")
             if obj_type in ['phase', 'both']:
                 model.opt_objp.data = gaussian_blur(model.opt_objp, kernel_size=obj_rblur_ks, sigma=obj_rblur_std)
-                vprint(f"Apply lateral (y,x) Gaussian blur with std = {obj_rblur_std} px on objp at iter {niter}", verbose=self.verbose)
+                logger.info(f"Apply lateral (y,x) Gaussian blur with std = {obj_rblur_std} px on objp at iter {niter}")
     
     def apply_obj_zblur(self, model, niter):
         ''' Apply Gaussian blur to object, this only applies to the last dimension (...,L) '''
@@ -133,11 +133,11 @@ class CombinedConstraint(torch.nn.Module):
             if obj_type in ['amplitude', 'both']:
                 tensor = model.opt_obja.permute(0,2,3,1)
                 model.opt_obja.data = gaussian_blur_1d(tensor, kernel_size=obj_zblur_ks, sigma=obj_zblur_std).permute(0,3,1,2).contiguous() # contiguous() returns a contiguous memory layout so that DDP wouldn't complain about the stride mismatch of grad and params
-                vprint(f"Apply z-direction Gaussian blur with std = {obj_zblur_std} px on obja at iter {niter}", verbose=self.verbose)
+                logger.info(f"Apply z-direction Gaussian blur with std = {obj_zblur_std} px on obja at iter {niter}")
             if obj_type in ['phase', 'both']:
                 tensor = model.opt_objp.permute(0,2,3,1)
                 model.opt_objp.data = gaussian_blur_1d(tensor, kernel_size=obj_zblur_ks, sigma=obj_zblur_std).permute(0,3,1,2).contiguous() 
-                vprint(f"Apply z-direction Gaussian blur with std = {obj_zblur_std} px on objp at iter {niter}", verbose=self.verbose)
+                logger.info(f"Apply z-direction Gaussian blur with std = {obj_zblur_std} px on objp at iter {niter}")
     
     def apply_kr_filter(self, model, niter):
         ''' Apply kr Fourier filter constraint on object '''
@@ -151,10 +151,10 @@ class CombinedConstraint(torch.nn.Module):
             
             if obj_type in ['amplitude', 'both']:
                 model.opt_obja.data = kr_filter(model.opt_obja, relative_radius, relative_width)
-                vprint(f"Apply kr_filter constraint with kr_radius = {relative_radius} on obja at iter {niter}", verbose=self.verbose)
+                logger.info(f"Apply kr_filter constraint with kr_radius = {relative_radius} on obja at iter {niter}")
             if obj_type in ['phase', 'both']:
                 model.opt_objp.data = kr_filter(model.opt_objp, relative_radius, relative_width)
-                vprint(f"Apply kr_filter constraint with kr_radius = {relative_radius} on objp at iter {niter}", verbose=self.verbose)
+                logger.info(f"Apply kr_filter constraint with kr_radius = {relative_radius} on objp at iter {niter}")
         
     def apply_kz_filter(self, model, niter):
         ''' Apply kz Fourier filter constraint on object '''
@@ -167,10 +167,10 @@ class CombinedConstraint(torch.nn.Module):
             
             if obj_type in ['amplitude', 'both']:
                 model.opt_obja.data = kz_filter(model.opt_obja, beta_regularize_layers, alpha_gaussian, obj_type='amplitude')
-                vprint(f"Apply kz_filter constraint with beta = {beta_regularize_layers} on obja at iter {niter}", verbose=self.verbose)
+                logger.info(f"Apply kz_filter constraint with beta = {beta_regularize_layers} on obja at iter {niter}")
             if obj_type in ['phase', 'both']:
                 model.opt_objp.data = kz_filter(model.opt_objp, beta_regularize_layers, alpha_gaussian, obj_type='phase')
-                vprint(f"Apply kz_filter constraint with beta = {beta_regularize_layers} on objp at iter {niter}", verbose=self.verbose)
+                logger.info(f"Apply kz_filter constraint with beta = {beta_regularize_layers} on objp at iter {niter}")
     
     def apply_kr_thresh(self, model, niter):
         ''' Apply kr threshold constraint on object '''
@@ -181,10 +181,10 @@ class CombinedConstraint(torch.nn.Module):
             
             if obj_type in ['amplitude', 'both']:
                 model.opt_obja.data = dct_threshold_filter(model.opt_obja, threshold_ratio=thresh).contiguous()
-                vprint(f"Apply kr_filter constraint with threshold = {thresh} (ratio of spatial frequencies to keep) on obja at iter {niter}", verbose=self.verbose)
+                logger.info(f"Apply kr_filter constraint with threshold = {thresh} (ratio of spatial frequencies to keep) on obja at iter {niter}")
             if obj_type in ['phase', 'both']:
                 model.opt_objp.data = dct_threshold_filter(model.opt_objp, threshold_ratio=thresh).contiguous()
-                vprint(f"Apply kr_filter constraint with threshold = {thresh} (ratio of spatial frequencies to keep) on objp at iter {niter}", verbose=self.verbose)
+                logger.info(f"Apply kr_filter constraint with threshold = {thresh} (ratio of spatial frequencies to keep) on objp at iter {niter}")
     
     def apply_complex_ratio(self, model, niter):
         ''' Apply complex constraint on object '''
@@ -199,11 +199,11 @@ class CombinedConstraint(torch.nn.Module):
             if obj_type in ['amplitude', 'both']:
                 model.opt_obja.data = objac
                 amin, amax = model.opt_obja.min().item(), model.opt_obja.max().item()
-                vprint(f"Apply complex ratio constraint with alpha1: {alpha1}, alpha2: {alpha2}, and Cbar: {Cbar.item():.3f} on obja at iter {niter}. obja range becomes ({amin:.3f}, {amax:.3f})", verbose=self.verbose)
+                logger.info(f"Apply complex ratio constraint with alpha1: {alpha1}, alpha2: {alpha2}, and Cbar: {Cbar.item():.3f} on obja at iter {niter}. obja range becomes ({amin:.3f}, {amax:.3f})")
             if obj_type in ['phase', 'both']:
                 model.opt_objp.data = objpc
                 pmin, pmax = model.opt_objp.min().item(), model.opt_objp.max().item()
-                vprint(f"Apply complex ratio constraint with alpha1: {alpha1}, alpha2: {alpha2}, and Cbar: {Cbar.item():.3f} on objp at iter {niter}. objp range becomes ({pmin:.3f}, {pmax:.3f})", verbose=self.verbose)  
+                logger.info(f"Apply complex ratio constraint with alpha1: {alpha1}, alpha2: {alpha2}, and Cbar: {Cbar.item():.3f} on objp at iter {niter}. objp range becomes ({pmin:.3f}, {pmax:.3f})")  
     
     def apply_mirrored_amp(self, model, niter):
         '''Apply mirrored amplitude constraint on obja at voxel level'''
@@ -220,7 +220,7 @@ class CombinedConstraint(torch.nn.Module):
             model.opt_obja.data = relax * model.opt_obja + (1-relax) * amp_new
             amin, amax = model.opt_obja.min().item(), model.opt_obja.max().item()
             relax_str = f'relaxed ({relax}*obj + ({1-relax}*obj_new))' if relax != 0 else 'hard'
-            vprint(f"Apply {relax_str} mirrored amplitude constraint with scale = {scale} and power = {power} on obja at iter {niter}. obja range becomes ({amin:.3f}, {amax:.3f})", verbose=self.verbose)
+            logger.info(f"Apply {relax_str} mirrored amplitude constraint with scale = {scale} and power = {power} on obja at iter {niter}. obja range becomes ({amin:.3f}, {amax:.3f})")
     
     def apply_obj_z_recenter(self, model, niter):
         '''Apply object z-recentering along depth dimension '''
@@ -254,7 +254,7 @@ class CombinedConstraint(torch.nn.Module):
             # Update model probe
             H = near_field_evolution_torch(probe.shape[-2:], dx, -z_shift*dz, lambd, device=model.device) # If the object is shifted along +z, then the probe should be back-propagated along -z 
             model.opt_probe.data = torch.view_as_real(ifft2(H[None,] * fft2(probe)).contiguous())
-            vprint(f"Apply obj z-recenter constraint. Complex object and probe defocus are shifted by {z_shift:.3f} slice ({(z_shift*dz):.3f} {unit_str}) along depth dimension. threshold = {threshold}, scale = {scale}, and max_shift = {max_shift}.", verbose=self.verbose)
+            logger.info(f"Apply obj z-recenter constraint. Complex object and probe defocus are shifted by {z_shift:.3f} slice ({(z_shift*dz):.3f} {unit_str}) along depth dimension. threshold = {threshold}, scale = {scale}, and max_shift = {max_shift}.")
     
     def apply_obja_thresh(self, model, niter):
         ''' Apply thresholding on obja at voxel level '''
@@ -266,7 +266,7 @@ class CombinedConstraint(torch.nn.Module):
             
             model.opt_obja.data = relax * model.opt_obja + (1-relax) * model.opt_obja.clamp(min=thresh[0], max=thresh[1])
             relax_str = f'relaxed ({relax}*obj + ({1-relax}*obj_clamp))' if relax != 0 else 'hard'
-            vprint(f"Apply {relax_str} threshold constraint with thresh = {thresh} on obja at iter {niter}", verbose=self.verbose)
+            logger.info(f"Apply {relax_str} threshold constraint with thresh = {thresh} on obja at iter {niter}")
 
     def apply_objp_postiv(self, model, niter):
         ''' Apply positivity constraint on objp at voxel level '''
@@ -285,7 +285,7 @@ class CombinedConstraint(torch.nn.Module):
             model.opt_objp.data = relax * model.opt_objp + (1-relax) * modified_objp
             omin, omax = model.opt_objp.min().item(), model.opt_objp.max().item()
             relax_str = f'relaxed ({relax}*obj + ({1-relax}*obj_postiv))' if relax != 0 else 'hard'
-            vprint(f"Apply {relax_str} positivity constraint on objp with '{mode}' mode at iter {niter}. Original min = {original_min.item():.3f}. objp range becomes ({omin:.3f}, {omax:.3f})", verbose=self.verbose)           
+            logger.info(f"Apply {relax_str} positivity constraint on objp with '{mode}' mode at iter {niter}. Original min = {original_min.item():.3f}. objp range becomes ({omin:.3f}, {omax:.3f})")           
 
     def apply_pos_recenter(self, model, niter):
         ''' Apply position recentering constraint on probe positions '''
@@ -304,7 +304,7 @@ class CombinedConstraint(torch.nn.Module):
 
             model.opt_probe_pos_shifts.data = pos_shifts - (1 - relax) * orig_mean
             relax_str = f'relaxed (pos_shifts - ({1-relax:.3f}*original_mean))' if relax != 0 else 'hard'
-            vprint(f"Apply {relax_str} position recentering constraint at iter {niter}. Original mean = {orig_mean.detach().cpu().numpy().round(3)}. probe_pos_shifts.mean(0) becomes {model.opt_probe_pos_shifts.mean(0).detach().cpu().numpy().round(3)}", verbose=self.verbose)
+            logger.info(f"Apply {relax_str} position recentering constraint at iter {niter}. Original mean = {orig_mean.detach().cpu().numpy().round(3)}. probe_pos_shifts.mean(0) becomes {model.opt_probe_pos_shifts.mean(0).detach().cpu().numpy().round(3)}")
 
     def apply_tilt_smooth(self, model, niter):
         ''' Apply Gaussian blur to object tilts '''
@@ -317,11 +317,11 @@ class CombinedConstraint(torch.nn.Module):
             N_scan_fast = model.N_scan_fast
             
             if model.opt_obj_tilts.shape[0] == 1: # obj_tilts.shape = (1,2) for tilt_type: 'all', and (N,2) for 'each'
-                vprint("`tilt_smooth` constraint requires `tilt_type':'each'`, skip this constraint", verbose=self.verbose)
+                logger.info("`tilt_smooth` constraint requires `tilt_type':'each'`, skip this constraint")
                 return 
             obj_tilts = (model.opt_obj_tilts.reshape(N_scan_slow, N_scan_fast, 2)).permute(2,0,1)
             model.opt_obj_tilts.data = gaussian_blur(obj_tilts, kernel_size=5, sigma=tilt_smooth_std).permute(1,2,0).reshape(-1,2).contiguous() # contiguous() returns a contiguous memory layout so that DDP wouldn't complain about the stride mismatch of grad and params
-            vprint(f"Apply Gaussian blur with std = {tilt_smooth_std} scan positions on obj_tilts at iter {niter}", verbose=self.verbose)
+            logger.info(f"Apply Gaussian blur with std = {tilt_smooth_std} scan positions on obj_tilts at iter {niter}")
     
     def forward(self, model, niter):
         """

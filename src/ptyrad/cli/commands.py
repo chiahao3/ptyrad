@@ -28,7 +28,7 @@ def run(args):
     from ptyrad.params import load_params
     from ptyrad.runtime.device import set_accelerator, set_gpu_device
     from ptyrad.runtime.diagnostics import print_system_info
-    from ptyrad.runtime.logging import CustomLogger
+    from ptyrad.runtime.logging import LoggingManager
     from ptyrad.runtime.seed import resolve_seed_priority
     from ptyrad.solver import PtyRADSolver
     
@@ -41,8 +41,8 @@ def run(args):
         print("Usage: ptyrad run <path/to/params.yaml>")
         sys.exit(1)
     
-    # Setup CustomLogger
-    logger = CustomLogger(
+    # Setup LoggingManager
+    LoggingManager(
         log_file='ptyrad_log.txt',
         log_dir='auto',
         prefix_time='datetime',
@@ -60,7 +60,7 @@ def run(args):
     params = load_params(params_path, validate=not args.skip_validate)
     device = set_gpu_device(args.gpuid)
     seed = resolve_seed_priority(args_seed=args.seed, params_seed=get_nested(params, "init_params.random_seed", safe=True), acc=accelerator)
-    ptycho_solver = PtyRADSolver(params, device=device, seed=seed, acc=accelerator, logger=logger)
+    ptycho_solver = PtyRADSolver(params, device=device, seed=seed, acc=accelerator)
     ptycho_solver.run()
 
 def check_gpu(args):
