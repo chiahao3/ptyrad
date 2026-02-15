@@ -295,12 +295,6 @@ class ReconParams(BaseModel):
     Set to true if you want to copy the .yml params file to the hypertune folder (hypertune mode) or individual reconstruction folders (reconsturction mode). 
     Suggested value is true for better record keeping, although most information is saved in model.pt and can be loaded by ckpt = torch.load('model.pt'), params = ckpt['params'].
     """
-    
-    if_quiet: bool = Field(default=False, description="Reduce printed information during reconstruction")
-    """
-    Set to true if you want to reduce the amount of printed information during PtyRAD reconstruction. 
-    Suggested value is false for more information, but if you're running hypertune mode you should consider setting it to true.
-    """
 
     compiler_configs: Optional[CompilerConfigs] = Field(default_factory=CompilerConfigs, description="PyTorch compiler configurations")
     """

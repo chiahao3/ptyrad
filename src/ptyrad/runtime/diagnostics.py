@@ -24,7 +24,7 @@ def is_mig_enabled():
         
         # Check for errors in the command execution
         if result.returncode != 0:
-            print(f"Error running nvidia-smi: {result.stderr.strip()}")
+            report(f"Error running nvidia-smi: {result.stderr.strip()}")
             return False
         
         # Parse the output to check for MIG mode
@@ -36,11 +36,11 @@ def is_mig_enabled():
         return False
     except FileNotFoundError:
         # `nvidia-smi` is not available
-        print("nvidia-smi not found. Unable to detect MIG mode.")
+        report("nvidia-smi not found. Unable to detect MIG mode.")
         return False
     except Exception as e:
         # Catch other unexpected errors
-        print(f"Error detecting MIG mode: {e}")
+        report(f"Error detecting MIG mode: {e}")
         return False
 
 def print_system_info():

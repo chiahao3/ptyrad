@@ -18,6 +18,7 @@ from .commands import (
     validate_params,
 )
 
+from ptyrad.runtime.logging import VERBOSITY_MAPPING
 
 def main():
     parser = argparse.ArgumentParser(
@@ -59,6 +60,7 @@ def main():
     parser_run.add_argument("--gpuid", type=str, required=False, default="0", help="GPU ID to use ('acc', 'cpu', or an integer)")
     parser_run.add_argument("--jobid", type=int, required=False, default=0, help="Unique identifier for hypertune mode with multiple GPU workers")
     parser_run.add_argument("--seed", type=int, required=False, help="Random seed for improved reproducibility")
+    parser_run.add_argument("--verbosity", "-v",type=str, default="INFO", choices=list(VERBOSITY_MAPPING.keys()), help="Set the logging verbosity level (default: INFO)")
     parser_run.set_defaults(func=run)
 
     # check-gpu

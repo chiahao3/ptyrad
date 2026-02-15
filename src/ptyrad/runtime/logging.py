@@ -69,7 +69,8 @@ class LoggingManager:
         global _active_manager
         _active_manager = self # Register this instance as the active one
         self.logger = logging.getLogger('ptyrad')
-        self.logger.setLevel(VERBOSITY_MAPPING[verbosity])
+        target_level = VERBOSITY_MAPPING.get(verbosity.upper(), logging.DEBUG)
+        self.logger.setLevel(target_level)
         
         # Clear all existing handlers to re-instantiate the logger
         if self.logger.hasHandlers():
@@ -95,7 +96,7 @@ class LoggingManager:
         # Create console handler
         self.console_handler = logging.StreamHandler()
         self.console_handler.addFilter(RankZeroFilter())
-        self.console_handler.setLevel(logging.INFO)
+        self.console_handler.setLevel(target_level)
         formatter = logging.Formatter('%(asctime)s - %(message)s' if show_timestamp else '%(message)s')
         self.console_handler.setFormatter(formatter)
         
@@ -103,7 +104,7 @@ class LoggingManager:
         self.log_buffer = io.StringIO()
         self.buffer_handler = logging.StreamHandler(self.log_buffer)
         self.buffer_handler.addFilter(RankZeroFilter())
-        self.buffer_handler.setLevel(logging.INFO)
+        self.buffer_handler.setLevel(target_level)
         self.buffer_handler.setFormatter(formatter)
 
         # Add handlers to the logger

@@ -48,7 +48,8 @@ def run(args):
         prefix_time='datetime',
         prefix_jobid=args.jobid,
         append_to_file=True,
-        show_timestamp=True
+        show_timestamp=True,
+        verbosity=args.verbosity
     )
 
     # Set up accelerator for multiGPU/mixed-precision setting, 

@@ -1,3 +1,4 @@
+import logging
 import os
 from typing import List, Optional, Tuple
 
@@ -6,6 +7,7 @@ import numpy as np
 from .generic import load_npy, load_raw, load_tif, write_npy, write_tif
 from .hierarchy import load_ND_with_key, write_hdf5
 
+logger = logging.getLogger(__name__)
 
 def load_array_from_file(
     path: str,
@@ -87,7 +89,7 @@ def save_array(data, file_dir='', file_name='ptyrad_init_meas', file_format="hdf
         try:
             data = data.reshape(output_shape)
         except ValueError as e:
-            print(f"WARNING: {e}, the data shape is preserved as {data.shape}")
+            logger.warning(f"WARNING: {e}, the data shape is preserved as {data.shape}")
             
     # Append shape to the filename if enabled
     if append_shape:
@@ -97,10 +99,10 @@ def save_array(data, file_dir='', file_name='ptyrad_init_meas', file_format="hdf
     # Construct the full file path
     file_format = file_format.lower()
     file_path = os.path.join(file_dir, f"{file_name}.{file_format}")
-    print(f"Saving array with shape = {data.shape} and dtype = {data.dtype}")
+    logger.info(f"Saving array with shape = {data.shape} and dtype = {data.dtype}")
     
     if os.path.isfile(file_path):
-        print(f"file path = '{file_path}' already exists, the file will be overwritten.")
+        logger.info(f"file path = '{file_path}' already exists, the file will be overwritten.")
     
     if file_format in ["tif", "tiff"]:
         write_tif(file_path, data)

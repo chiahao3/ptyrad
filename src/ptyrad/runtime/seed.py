@@ -1,16 +1,19 @@
+import logging
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 def resolve_seed_priority(args_seed, params_seed, acc):
     
     if  args_seed is not None:
         seed = args_seed
-        print(f"Random seed: {seed} provided by CLI argument")
+        logger.info(f"Random seed: {seed} provided by CLI argument")
     elif  params_seed is not None:
         seed = params_seed
-        print(f"Random seed: {seed} provided by params file")
+        logger.info(f"Random seed: {seed} provided by params file")
     elif acc is not None and acc.num_processes > 1:
         seed = 42 # seed is required otherwise the probe position with random displacement could cause objects with different shapes
-        print(f"Random seed: {seed} is set automatically because multi GPU is detected but no seed is provided")
+        logger.info(f"Random seed: {seed} is set automatically because multi GPU is detected but no seed is provided")
     else:
         seed = None
     return seed

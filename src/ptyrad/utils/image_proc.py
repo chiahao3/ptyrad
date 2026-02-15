@@ -317,7 +317,7 @@ def normalize_by_bit_depth(arr, bit_depth):
     elif bit_depth == 'raw':
         norm_arr_in_bit_depth = np.float32(arr)
     else:
-        print(f'Unsuported bit_depth :{bit_depth} was passed into `result_modes`, `raw` is used instead')
+        logger.warning(f'Unsuported bit_depth :{bit_depth} was passed into `result_modes`, `raw` is used instead')
         norm_arr_in_bit_depth = np.float32(arr)
     
     return norm_arr_in_bit_depth

@@ -2,8 +2,11 @@
 Params files parsing functions
 """
 
+import logging
 import os
 from typing import Dict
+
+logger = logging.getLogger(__name__)
 
 ###### These are params loading functions ######
 
@@ -12,6 +15,9 @@ def load_params(file_path: str, validate: bool = True):
     # Check if the file exists
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"The specified file '{file_path}' does not exist. Please check your file path and working directory.")
+    
+    logger.info("### Loading params file ###")
+    logger.info(f"params_path = {file_path}")
     
     param_path, param_type = os.path.splitext(file_path)
     if param_type in (".yml", ".yaml"):
@@ -33,15 +39,31 @@ def load_params(file_path: str, validate: bool = True):
     if params_dict.get('init_params') is not None:
         params_dict['init_params'] = normalize_probe_params(params_dict['init_params'])
     
+    # Additional correction for recon_params.if_quiet (temporatily added for smooth transition to v0.1.0b13)
+    if params_dict.get('recon_params') is not None:
+        if 'if_quiet' in params_dict.get('recon_params'):
+            logger.warning(
+            "WARNING: The 'if_quiet' parameter is deprecated since v0.1.0v13. PtyRAD now uses a central LoggingManager. "
+            "This flag will be ignored.") 
+            params_dict['recon_params'].pop('if_quiet')
+    
     # Pass into PtyRADParams (pydantic model) for default filling and validation
     if validate:
         from .ptyrad_params import PtyRADParams
+        logger.info("validate = True: Filling defaults and validating the params file...")
         params_dict = PtyRADParams(**params_dict).model_dump()
+        logger.info("Success! Params file validated and defaults applied.")
+    else:
+        logger.warning("WARNING: validate = False: Skipping validation and default filling.")
+        logger.warning("         Ensure your params file is complete and consistent.")
+        logger.warning("         If you encounter issues, consider enabling validation or report the bug.")
+    
     
     # Add the file path to the params_dict while we save the params file to output folder
     params_dict['params_path'] = file_path
     
-    print(" ")
+    logger.info(" ")
+    
     return params_dict
 
 def load_json_params(file_path):
@@ -151,14 +173,14 @@ def normalize_probe_params(init_params: Dict) -> Dict:
                 migrated_keys.append(legacy_key)
                 
             else:
-                print(f"Ignoring '{legacy_key}' because it is already defined in 'probe_aberrations' as one of {legacy_map[legacy_key][-1]}")
+                logger.warning(f"WARNING: Ignoring '{legacy_key}' because it is already defined in 'probe_aberrations' as one of {legacy_map[legacy_key][-1]}")
                 pass
         
             # Old keys are deleted regardless
             del init_params[legacy_key] 
         
     if migrated_keys:
-        print(f"WARNING: Probe aberrations '{migrated_keys}' in 'init_params' are depracated since PtyRAD v0.1.0b13 and are automatically converted to 'probe_aberrations' dict.")
+        logger.warning(f"WARNING: Probe aberrations '{migrated_keys}' in 'init_params' are depracated since PtyRAD v0.1.0b13 and are automatically converted to 'probe_aberrations' dict.")
     
     # --- STEP 2: Canonicalization (The "Clean" Phase) ---
     if aberrations:
@@ -193,7 +215,7 @@ def normalize_constraint_params(constraint_params):
         }
 
     if print_freq_warning:
-        print("WARNING: For constraint_params, 'freq' is depracated since PtyRAD v0.1.0b11 and is automatically converted to 'step'.")
+        logger.warning("WARNING: For constraint_params, 'freq' is depracated since PtyRAD v0.1.0b11 and is automatically converted to 'step'.")
     
     return normalized_params
 
