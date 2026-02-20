@@ -383,14 +383,15 @@ def recon_loop(model, init, params, optimizer, loss_fn, constraint_fn, indices, 
         
         # Toggle the grad calculation to enable or disable AD update on tensors at certain iterations
         toggle_grad_requires(model_instance, niter)
-        
-        # Apply torch.compile to `recon_step``
+
+        # Apply torch.compile
         if niter in model_instance.compilation_iters: # compilation_iters always contain niter=1
             logger.info(f"Setting up PyTorch compiler with {compiler_configs}")
             torch._dynamo.reset()
-            recon_step_compiled = torch.compile(recon_step, **compiler_configs)
+            model = torch.compile(model, **compiler_configs)
+            loss_fn = torch.compile(loss_fn, **compiler_configs)
         
-        batch_losses = recon_step_compiled(batches, grad_accumulation, model, optimizer, loss_fn, constraint_fn, niter, acc=acc)
+        batch_losses = recon_step(batches, grad_accumulation, model, optimizer, loss_fn, constraint_fn, niter, acc=acc)
         
         # Only log the main process
         if acc is None or acc.is_main_process:
@@ -436,10 +437,11 @@ def recon_step(batches, grad_accumulation, model, optimizer, loss_fn, constraint
             - iter_t (float): The total time taken to complete the iteration.
     """
     batch_losses = {name: [] for name in loss_fn.loss_params.keys()}
-    start_iter_t = time_sync()
     
     # Use the method on the wrapped model (DDP) if it exists
     model_instance = model.module if hasattr(model, "module") else model
+    
+    start_iter_t = time_sync(model_instance.device)
     
     # Run the iteration with closure for LBFGS optimizer
     if isinstance(optimizer, torch.optim.LBFGS):
@@ -489,7 +491,6 @@ def recon_step(batches, grad_accumulation, model, optimizer, loss_fn, constraint
         optimizer.zero_grad() # Since PyTorch 2.0 the default behavior is set_to_none=True for performance https://github.com/pytorch/pytorch/issues/92656
         
         for batch_idx, batch in enumerate(batches):
-            start_batch_t = time_sync()
             
             # Compute forward pass and loss (wrapped in autocast if accelerate is enabled)
             loss_batch, losses = compute_loss(batch, model, model_instance, loss_fn, acc)
@@ -508,7 +509,6 @@ def recon_step(batches, grad_accumulation, model, optimizer, loss_fn, constraint
                     acc.wait_for_everyone()
                 optimizer.step() 
                 optimizer.zero_grad() 
-            batch_t = time_sync() - start_batch_t
         
             # Clear the model cache after the mini-batch
             model_instance.clear_cache()
@@ -518,12 +518,10 @@ def recon_step(batches, grad_accumulation, model, optimizer, loss_fn, constraint
                 acc.wait_for_everyone()
             for loss_name, loss_value in zip(loss_fn.loss_params.keys(), losses):
                 batch_losses[loss_name].append(loss_value.detach().cpu().numpy())
-            if batch_idx in np.linspace(0, len(batches)-1, num=6, dtype=int):
-                logger.info(f"Done batch {batch_idx+1} with {len(batch)} indices ({batch[:5].tolist()}...) in {batch_t:.3f} sec")
     
     constraint_fn(model_instance, niter)
     
-    iter_t = time_sync() - start_iter_t
+    iter_t = time_sync(model_instance.device) - start_iter_t
     model_instance.loss_iters.append((niter, loss_logger(batch_losses, niter, iter_t)))
     model_instance.iter_times.append(iter_t)
     model_instance.dz_iters.append((niter, model_instance.opt_slice_thickness.detach().cpu().numpy()))
@@ -534,8 +532,7 @@ def recon_step(batches, grad_accumulation, model, optimizer, loss_fn, constraint
 #  SECTION 3: HELPERS
 # ==============================================================================
 
-@torch.compiler.disable
-def time_sync():
+def time_sync(device=None):
     # PyTorch doesn't have a direct exposed API to check the selected default device 
     # so we'll be checking these .is_available() just to prevent error.
     # Luckily these checks won't really affect the performance.
@@ -544,10 +541,10 @@ def time_sync():
     
     # Check if CUDA is available
     if torch.cuda.is_available():
-        torch.cuda.synchronize()
+        torch.cuda.synchronize(device)
     # Check if MPS (Metal Performance Shaders) is available (macOS only)
     elif torch.backends.mps.is_available():
-        torch.mps.synchronize()
+        torch.mps.synchronize(device)
     
     # Measure the time
     t = perf_counter()
@@ -568,7 +565,7 @@ def parse_torch_compile_configs(configs):
 def toggle_grad_requires(model, niter):
     """Toggle requires_grad based on start and end iteration for each optimizable tensor."""
 
-    logger.info(" ") # Empty line for the start of each iteration
+    logger.debug(" ") # Empty line for the start of each iteration
     
     optimizable_tensors = model.optimizable_tensors
     for param_name in model.optimizable_tensors.keys():
@@ -581,7 +578,7 @@ def toggle_grad_requires(model, niter):
         requires_grad = grad_started and not grad_ended
         
         optimizable_tensors[param_name].requires_grad = requires_grad
-        logger.info(f"Iter: {niter}, {param_name}.requires_grad = {requires_grad}")
+        logger.debug(f"Iter: {niter}, {param_name}.requires_grad = {requires_grad}")
 
 def compute_loss(batch, model, model_instance, loss_fn, acc=None):
     """Compute the model output and loss, with optional support for accelerate's autocast."""

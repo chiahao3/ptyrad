@@ -157,28 +157,33 @@ class LoggingManager:
         show_timestamp = self.show_timestamp
         
         if self.flush_file:
-            # Ensure the log directory exists
-            os.makedirs(log_dir, exist_ok=True)
-            log_file_path = os.path.join(log_dir, log_file)
+            if RankZeroFilter().filter(None):
+                # Ensure the log directory exists
+                os.makedirs(log_dir, exist_ok=True)
+                log_file_path = os.path.join(log_dir, log_file)
 
-            # Write the buffered logs to the specified file
-            try:
-                with open(log_file_path, file_mode, encoding="utf-8") as f:
-                    f.write(self.log_buffer.getvalue())
-            except UnicodeEncodeError as e:
-                self.logger.warning(f"Failed to write log due to Unicode issue: {e}")
-                with open(log_file_path, file_mode, encoding="ascii", errors="replace") as f:
-                    f.write(self.log_buffer.getvalue())
+                # Write the buffered logs to the specified file
+                try:
+                    with open(log_file_path, file_mode, encoding="utf-8") as f:
+                        f.write(self.log_buffer.getvalue())
+                except UnicodeEncodeError as e:
+                    self.logger.warning(f"Failed to write log due to Unicode issue: {e}")
+                    with open(log_file_path, file_mode, encoding="ascii", errors="replace") as f:
+                        f.write(self.log_buffer.getvalue())
 
-            # Clear the buffer
-            self.log_buffer.truncate(0)
-            self.log_buffer.seek(0)
+                # Clear the buffer
+                self.log_buffer.truncate(0)
+                self.log_buffer.seek(0)
 
-            # Set up a file handler for future logging to the file
-            self.file_handler = logging.FileHandler(log_file_path, mode='a')  # Always append after initial flush
-            self.file_handler.setFormatter(logging.Formatter('%(asctime)s - %(message)s' if show_timestamp else '%(message)s'))
-            self.logger.addHandler(self.file_handler)
-            self.logger.info(f"### Log file is flushed (created) as {log_file_path} ###")
+                # Set up a file handler for future logging to the file
+                self.file_handler = logging.FileHandler(log_file_path, mode='a')  # Always append after initial flush
+                self.file_handler.setFormatter(logging.Formatter('%(asctime)s - %(message)s' if show_timestamp else '%(message)s'))
+                self.logger.addHandler(self.file_handler)
+                self.logger.info(f"### Log file is flushed (created) as {log_file_path} ###")
+            else: # For rank > 0, just clear the buffer and skip file creation
+                self.file_handler = None
+                self.log_buffer.truncate(0)
+                self.log_buffer.seek(0)
         else:
             self.file_handler = None
             self.logger.warning(f"### Log file is not flushed (created) because log_file is set to {self.log_file} ###")
