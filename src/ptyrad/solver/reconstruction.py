@@ -393,6 +393,9 @@ def recon_loop(model, init, params, optimizer, loss_fn, constraint_fn, indices, 
             logger.info(f"Setting up PyTorch compiler with {compiler_configs}")
             torch._dynamo.reset()
             compute_loss_fn = torch.compile(compute_loss, **compiler_configs)
+            
+            if not isinstance(optimizer, torch.optim.LBFGS): # Only compile first-order optimizers (like Adam), L-BFGS relies on dynamic closures that cannot be safely traced.
+                optimizer.step = torch.compile(optimizer.step, **compiler_configs)
         
         batch_losses = recon_step(batches, grad_accumulation, model, optimizer, loss_fn, constraint_fn, niter, acc=acc, compute_loss_fn=compute_loss_fn)
         
@@ -514,6 +517,8 @@ def recon_step(batches, grad_accumulation, model, optimizer, loss_fn, constraint
         optimizer.zero_grad() # Since PyTorch 2.0 the default behavior is set_to_none=True for performance https://github.com/pytorch/pytorch/issues/92656
         
         for batch_idx, batch in enumerate(batches):
+            
+            torch.compiler.cudagraph_mark_step_begin() # Marks the start of a new compiled step to prevent CUDA Graph memory overwrite errors.
             
             measured_DP = model_instance.get_measurements(batch)
             

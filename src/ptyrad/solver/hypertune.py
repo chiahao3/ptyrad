@@ -305,6 +305,9 @@ def optuna_objective(trial, params, init, loss_fn, constraint_fn, device='cuda')
             torch._dynamo.reset()
             compute_loss_fn = torch.compile(compute_loss, **compiler_configs)
         
+            if not isinstance(optimizer, torch.optim.LBFGS): # Only compile first-order optimizers (like Adam), L-BFGS relies on dynamic closures that cannot be safely traced.
+                optimizer.step = torch.compile(optimizer.step, **compiler_configs)
+        
         if model.random_seed is not None:
             set_random_seed(seed=model.random_seed + niter) # This ensures the batches order are different for each iter in a reproducible way
         shuffle(batches_np)
