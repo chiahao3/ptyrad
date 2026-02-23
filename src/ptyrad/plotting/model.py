@@ -22,7 +22,6 @@ from .basic import (
 
 logger = logging.getLogger(__name__)
 
-@torch.compiler.disable
 def plot_summary(output_path, model, niter, indices, init_variables, selected_figs=['loss', 'forward', 'probe_r_amp', 'probe_k_amp', 'probe_k_phase', 'pos'], collate_str='', show_fig=True, save_fig=False):
     """ Wrapper function for most visualization function """
     # selected_figs can take 'loss', 'forward', 'probe_r_amp', 'probe_k_amp', 'probe_k_phase', 'pos', 'tilt', or 'all'

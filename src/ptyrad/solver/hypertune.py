@@ -18,6 +18,7 @@ from ptyrad.plotting.model import plot_summary
 from ptyrad.runtime.seed import set_random_seed
 
 from .reconstruction import (
+    compute_loss,
     create_optimizer,
     parse_torch_compile_configs,
     prepare_recon,
@@ -287,7 +288,10 @@ def optuna_objective(trial, params, init, loss_fn, constraint_fn, device='cuda')
     # Create the model and optimizer, prepare indices, batches, and output_path
     model         = PtychoModel(init.init_variables, params['model_params'], device=device)
     optimizer     = create_optimizer(model.optimizer_params, model.optimizable_params)
-    indices, batches, output_path = prepare_recon(model, init, params)
+    indices, batches_np, output_path = prepare_recon(model, init, params)
+
+    # Initialize the compute_loss_fn
+    compute_loss_fn = compute_loss 
       
     # Optimization loop
     for niter in range(1, NITER+1):
@@ -295,16 +299,18 @@ def optuna_objective(trial, params, init, loss_fn, constraint_fn, device='cuda')
         # Toggle the grad calculation to enable or disable AD update on tensors at certain iterations
         toggle_grad_requires(model, niter)
         
-        # Apply torch.compile to `recon_step``
+        # Apply torch.compile
         if niter in model.compilation_iters: # compilation_iters always contain niter=1
             logger.info(f"Setting up PyTorch compiler with {compiler_configs}")
             torch._dynamo.reset()
-            recon_step_compiled = torch.compile(recon_step, **compiler_configs)
+            compute_loss_fn = torch.compile(compute_loss, **compiler_configs)
         
         if model.random_seed is not None:
             set_random_seed(seed=model.random_seed + niter) # This ensures the batches order are different for each iter in a reproducible way
-        shuffle(batches)
-        batch_losses = recon_step_compiled(batches, grad_accumulation, model, optimizer, loss_fn, constraint_fn, niter)
+        shuffle(batches_np)
+        batches = [torch.from_numpy(arr).to(device=device) for arr in batches_np]
+        
+        batch_losses = recon_step(batches, grad_accumulation, model, optimizer, loss_fn, constraint_fn, niter, compute_loss_fn=compute_loss_fn)
 
         ## Saving intermediate results
         if SAVE_ITERS is not None and niter % SAVE_ITERS == 0:

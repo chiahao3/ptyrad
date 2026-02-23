@@ -412,6 +412,6 @@ class PtychoModel(torch.nn.Module):
         dp_fwd                     = self.get_forward_meas(obja_patches, objp_patches, probes, propagators)
         
         # Keep the object_patches for later object-specific loss
-        self._current_object_patches = torch.stack([obja_patches, objp_patches], dim=-1)
+        self._current_object_patches = (obja_patches, objp_patches)
         
         return dp_fwd

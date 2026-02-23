@@ -103,7 +103,7 @@ class CombinedLoss(torch.nn.Module):
             loss_sparse = torch.tensor(0, dtype=torch.float32, device=self.device)
         return loss_sparse
     
-    def get_loss_simlar(self, object_patches, omode_occu):
+    def get_loss_simlar(self, obja_patches, objp_patches, omode_occu):
         """ Computes the similarity loss between different object modes. """
 
         # Calculate loss_simlar by calculating the similarity between different omodes
@@ -114,8 +114,6 @@ class CombinedLoss(torch.nn.Module):
             obj_type     = simlar_params['obj_type']
             obj_blur_std = simlar_params['blur_std']
             scale_factor = simlar_params['scale_factor']
-            obja_patches = object_patches[...,0]
-            objp_patches = object_patches[...,1]
             temp_loss = torch.tensor(0, dtype=torch.float32, device=self.device)
             
             if obj_type in ['amplitude', 'both']:
@@ -140,7 +138,7 @@ class CombinedLoss(torch.nn.Module):
             loss_simlar = torch.tensor(0, dtype=torch.float32, device=self.device)
         return loss_simlar
     
-    def forward(self, model_DP, measured_DP, object_patches, omode_occu):
+    def forward(self, model_DP, measured_DP, obja_patches, objp_patches, omode_occu):
         """
         Combines all the loss components and returns the total loss and individual losses.
 
@@ -149,8 +147,8 @@ class CombinedLoss(torch.nn.Module):
         losses.append(self.get_loss_single(model_DP, measured_DP))
         losses.append(self.get_loss_poissn(model_DP, measured_DP))
         losses.append(self.get_loss_pacbed(model_DP, measured_DP))
-        losses.append(self.get_loss_sparse(object_patches[...,1], omode_occu))
-        losses.append(self.get_loss_simlar(object_patches, omode_occu))
+        losses.append(self.get_loss_sparse(objp_patches, omode_occu))
+        losses.append(self.get_loss_simlar(obja_patches, objp_patches, omode_occu))
         total_loss = sum(losses)
         return total_loss, losses
     

@@ -556,7 +556,6 @@ def make_output_folder(
     logger.info(f"output_path = '{output_path}' is generated!")
     return output_path
 
-@torch.compiler.disable
 def save_results(output_path, model, params, optimizer, niter, indices, batch_losses, collate_str=''):
     
     save_result_list = params['recon_params'].get('save_result', ['model', 'obj', 'probe'])

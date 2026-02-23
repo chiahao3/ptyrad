@@ -102,6 +102,8 @@ def create_optimizer(optimizer_params, optimizable_params):
     optimizer_configs = optimizer_params.get('configs') or {} # if "None" is provided or missing, it'll default an empty dict {}
     ptyrad_path = optimizer_params.get('load_state')
     
+    device = optimizable_params[0]['params'][0].device
+
     logger.info(f"### Creating PyTorch '{optimizer_name}' optimizer with configs = {optimizer_configs} ###")
     
     # Get the optimizer class from torch.optim
@@ -118,7 +120,6 @@ def create_optimizer(optimizer_params, optimizable_params):
         optimizable_params = [p['params'][0] for p in optimizable_params if p['params'][0].requires_grad] # LBFGS only takes 1 params group as an iterable
 
     optimizer = optimizer_class(optimizable_params, **optimizer_configs)
-    device = optimizable_params[0]['params'][0].device
     
     if ptyrad_path is not None and isinstance(ptyrad_path, str):
         try:
@@ -378,6 +379,9 @@ def recon_loop(model, init, params, optimizer, loss_fn, constraint_fn, indices, 
     
     logger.info("### Start the PtyRAD iterative ptycho reconstruction ###")
     
+    # Initialize the compute_loss_fn
+    compute_loss_fn = compute_loss 
+    
     # Optimization loop
     for niter in range(1,NITER+1):
         
@@ -388,10 +392,9 @@ def recon_loop(model, init, params, optimizer, loss_fn, constraint_fn, indices, 
         if niter in model_instance.compilation_iters: # compilation_iters always contain niter=1
             logger.info(f"Setting up PyTorch compiler with {compiler_configs}")
             torch._dynamo.reset()
-            model = torch.compile(model, **compiler_configs)
-            loss_fn = torch.compile(loss_fn, **compiler_configs)
+            compute_loss_fn = torch.compile(compute_loss, **compiler_configs)
         
-        batch_losses = recon_step(batches, grad_accumulation, model, optimizer, loss_fn, constraint_fn, niter, acc=acc)
+        batch_losses = recon_step(batches, grad_accumulation, model, optimizer, loss_fn, constraint_fn, niter, acc=acc, compute_loss_fn=compute_loss_fn)
         
         # Only log the main process
         if acc is None or acc.is_main_process:
@@ -409,7 +412,7 @@ def recon_loop(model, init, params, optimizer, loss_fn, constraint_fn, indices, 
     logger.info(f"### Finished {NITER} iterations, averaged iter_t = {np.mean(model_instance.iter_times):.5g} with std = {np.std(model_instance.iter_times):.3f} ###")
     logger.info(" ")
 
-def recon_step(batches, grad_accumulation, model, optimizer, loss_fn, constraint_fn, niter, acc=None):
+def recon_step(batches, grad_accumulation, model, optimizer, loss_fn, constraint_fn, niter, acc=None, compute_loss_fn=None):
     """
     Performs one iteration (or step) of the ptychographic reconstruction in the optimization loop.
 
@@ -452,29 +455,49 @@ def recon_step(batches, grad_accumulation, model, optimizer, loss_fn, constraint
         if model.random_seed is not None:
             set_random_seed(seed=model.random_seed + niter) # This ensures batch_indices is different for each iter in a reproducible way
         np.random.shuffle(batch_indices)
-        accu_batch_indices = np.array_split(batch_indices,num_batch//grad_accumulation)
-        
-        def closure():
-            optimizer.zero_grad()
-            total_loss = 0
-            # Run grad accumulation inside the closure for LBFGS, note that each closure is ideally 1 full iter with grad_accu
-            for batch_idx in accu_batch_idx:
-                batch = batches[batch_idx]
-                model_DP = model(batch) # Forward pass is handled automatically by DDP, but methods/attributes should use the unwrapped model
-                measured_DP = model_instance.get_measurements(batch)
-                object_patches = model_instance._current_object_patches
-                loss_batch, losses = loss_fn(model_DP, measured_DP, object_patches, model_instance.omode_occu)
-                total_loss += loss_batch # LBFGS uses the returned loss to perform the line-search so it's better to return the loss that's associated to all the batches
-            total_loss = total_loss / len(accu_batch_idx)
-            acc.backward(total_loss) if acc is not None else total_loss.backward()
-            return total_loss, losses
+        accu_batch_indices = np.array_split(batch_indices, max(1, num_batch//grad_accumulation))
         
         # Iterate through all accumulated batches. accu_batches = [[batch1],[batch2],[batch3]...], batches = [[accu_batches1],[accu_batches2],[accu_batches3]...]
         for accu_batch_idx in accu_batch_indices:
-            optimizer.step(lambda: closure()[0])
             
+            # Define the closure INSIDE the loop to safely capture the current accu_batch_idx
+            def closure():
+                optimizer.zero_grad()
+                total_loss = 0
+                
+                # Run grad accumulation inside the closure for LBFGS, note that each closure is ideally 1 full iter with grad_accu
+                for batch_idx in accu_batch_idx:
+                    batch = batches[batch_idx]
+                    
+                    measured_DP = model_instance.get_measurements(batch)
+                    loss_batch, _ = compute_loss_fn(batch, model, model_instance, measured_DP, loss_fn) # Forward pass is handled automatically by DDP, but methods/attributes should use the unwrapped model
+
+                    total_loss += loss_batch # LBFGS uses the returned loss to perform the line-search so it's better to return the loss that's associated to all the batches
+                    
+                total_loss = total_loss / len(accu_batch_idx)
+                acc.backward(total_loss) if acc is not None else total_loss.backward()
+                
+                return total_loss
+            
+            # Execute the L-BFGS step (which will call the closure multiple times for line-searches)
+            optimizer.step(closure)
+        
         # This extra evaluation on accumulated batches is just to get the `losses` for logging purpose
-        _, losses = closure()
+        with torch.no_grad():
+            total_loss = 0.0
+            losses = None
+
+            for batch_idx in accu_batch_idx:
+                batch = batches[batch_idx]
+
+                measured_DP = model_instance.get_measurements(batch)
+                loss_batch, losses = compute_loss_fn(batch, model, model_instance, measured_DP, loss_fn)
+
+                total_loss += loss_batch
+
+            total_loss = total_loss / len(accu_batch_idx)
+
+        # Clear any stale gradients
         optimizer.zero_grad()
         
         # Clear the model cache after the mini-batch
@@ -492,8 +515,10 @@ def recon_step(batches, grad_accumulation, model, optimizer, loss_fn, constraint
         
         for batch_idx, batch in enumerate(batches):
             
-            # Compute forward pass and loss (wrapped in autocast if accelerate is enabled)
-            loss_batch, losses = compute_loss(batch, model, model_instance, loss_fn, acc)
+            measured_DP = model_instance.get_measurements(batch)
+            
+            # Compute forward pass and loss
+            loss_batch, losses = compute_loss_fn(batch, model, model_instance, measured_DP, loss_fn)
             
             # Normalize the `loss_batch`` before populating the gradients
             # We only want to scale the `loss_batch` so the grad/update is scaled accordingly
@@ -580,23 +605,15 @@ def toggle_grad_requires(model, niter):
         optimizable_tensors[param_name].requires_grad = requires_grad
         logger.debug(f"Iter: {niter}, {param_name}.requires_grad = {requires_grad}")
 
-def compute_loss(batch, model, model_instance, loss_fn, acc=None):
-    """Compute the model output and loss, with optional support for accelerate's autocast."""
-    if acc is not None:
-        with acc.autocast():
-            model_DP = model(batch)
-            measured_DP = model_instance.get_measurements(batch)
-            object_patches = model_instance._current_object_patches
-            loss_batch, losses = loss_fn(model_DP, measured_DP, object_patches, model_instance.omode_occu)
-    else:
-        model_DP = model(batch)
-        measured_DP = model_instance.get_measurements(batch)
-        object_patches = model_instance._current_object_patches
-        loss_batch, losses = loss_fn(model_DP, measured_DP, object_patches, model_instance.omode_occu)
+def compute_loss(batch, model, model_instance, measured_DP, loss_fn):
+    """Compute the model output and loss."""
     
+    model_DP = model(batch)
+    object_patches = model_instance._current_object_patches
+    loss_batch, losses = loss_fn(model_DP, measured_DP, object_patches[0], object_patches[1], model_instance.omode_occu)
+   
     return loss_batch, losses
 
-@torch.compiler.disable
 def loss_logger(batch_losses, niter, iter_t):
     """
     Logs and summarizes the loss values for an iteration during the ptychographic reconstruction.

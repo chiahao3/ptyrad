@@ -6,7 +6,7 @@ High-level solver interface for PtyRAD workflows, including reconstruction and h
 import logging
 from copy import deepcopy
 
-import numpy as np
+import torch
 import torch.distributed as dist
 from torch.utils.data import DataLoader
 
@@ -14,8 +14,8 @@ from ptyrad.core import CombinedConstraint, CombinedLoss, PtychoModel
 from ptyrad.init import Initializer
 from ptyrad.io.dataloader import IndicesDataset
 from ptyrad.params.parser import copy_params_to_dir
-from ptyrad.utils.time import get_time, parse_sec_to_time_str
 from ptyrad.runtime.logging import get_logging_manager
+from ptyrad.utils.time import get_time, parse_sec_to_time_str
 
 from .hypertune import create_optuna_pruner, create_optuna_sampler, optuna_objective
 from .reconstruction import create_optimizer, prepare_recon, recon_loop, time_sync
@@ -99,6 +99,7 @@ class PtyRADSolver(object):
         model         = PtychoModel(self.init.init_variables, params['model_params'], device=device)
         optimizer     = create_optimizer(model.optimizer_params, model.optimizable_params)
         indices, batches, output_path = prepare_recon(model, self.init, params)
+        batches = [torch.from_numpy(arr).to(device=device) for arr in batches]
         
         # Handle LBFGS incompatibility
         if params['model_params']['optimizer_params']['name'] == 'LBFGS' and self.accelerator.num_processes >1:
@@ -109,7 +110,7 @@ class PtyRADSolver(object):
         
         # If using multi GPU, prepare the batches, model, optimizer with Accelerator
         if self.use_acc_device:
-            ordered_indices = IndicesDataset(np.concatenate(batches)) # Ordered indices would keep the original spatial distribution of each batch
+            ordered_indices = IndicesDataset(torch.concatenate(batches)) # Ordered indices would keep the original spatial distribution of each batch
             dataloader = DataLoader(ordered_indices, batch_size = params['recon_params']['BATCH_SIZE']['size'], shuffle=False) # This will do the batching sequentially
             batches = self.accelerator.prepare(dataloader) # Note that `batches` is replaced by a DataLoader (accelerate mode) that is also an iterable object
             model, optimizer = self.accelerator.prepare(model, optimizer)
