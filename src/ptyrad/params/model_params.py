@@ -114,17 +114,6 @@ class ModelParams(BaseModel):
     model_config = {"extra": "forbid"}
     
     
-    obj_preblur_std: Optional[float] = Field(
-        default=None,
-        ge=0.0,
-        description="Gaussian blur std for object before forward pass. unit: px (real space)",
-    )
-    """
-    This applies Gaussian blur to the object before simulating diffraction patterns. 
-    Since the gradient would flow to the original "object" before blurring, it's essentially deconvolving the object with a Gaussian kernel of specified std. 
-    This sort of deconvolution can generate sharp features, but the usage is not easily justifiable so treat it carefully as a visualization exploration
-    """
-
     detector_blur_std: Optional[float] = Field(
         default=None,
         ge=0.0,

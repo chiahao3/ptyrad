@@ -4,6 +4,7 @@ __pycache__
 data/
 output/
 params/
+torch_compile_debug/
 
 # setuptools build artifacts
 build/

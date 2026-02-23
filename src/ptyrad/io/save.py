@@ -150,7 +150,6 @@ def make_save_dict(output_path, model, params, optimizer, niter, indices, batch_
                 'params'                : params, 
                 'model_attributes': # Have to do this explicit saving because I want specific fields but don't want the enitre model with grids and other redundant info
                     {'detector_blur_std': model.detector_blur_std,
-                     'obj_preblur_std'  : model.obj_preblur_std,
                      'start_iter'       : model.start_iter,
                      'lr_params'        : model.lr_params,
                      'omode_occu'       : model.omode_occu,
@@ -416,9 +415,6 @@ def make_output_folder(
 
     # Attach model params (optional)
     if "model" in recon_dir_affixes:
-        if model.obj_preblur_std is not None and model.obj_preblur_std != 0:
-            parts.append(f"opreb{model.obj_preblur_std}")
-
         if model.detector_blur_std is not None and model.detector_blur_std != 0:
             parts.append(f"dpblur{model.detector_blur_std}")
 

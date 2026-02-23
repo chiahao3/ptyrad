@@ -147,8 +147,8 @@ def plot_forward_pass(model, indices, dp_power, show_fig=True, pass_fig=False):
         measured_DP = model.get_measurements(indices)
         
         probes_int  = probes_int.detach().cpu().numpy()
-        obja_ROI    = (obj_patches[...,0] * omode_occu[:,None,None,None]).sum(1).detach().cpu().numpy() # obj_ROI = (N_i, Nz,Ny,Nx)
-        objp_ROI    = (obj_patches[...,1] * omode_occu[:,None,None,None]).sum(1).detach().cpu().numpy() # obj_ROI = (N_i, Nz,Ny,Nx)
+        obja_ROI    = (obj_patches[0] * omode_occu[:,None,None,None]).sum(1).detach().cpu().numpy() # obj_ROI = (N_i, Nz,Ny,Nx)
+        objp_ROI    = (obj_patches[1] * omode_occu[:,None,None,None]).sum(1).detach().cpu().numpy() # obj_ROI = (N_i, Nz,Ny,Nx)
         model_DP    = model_DP.detach().cpu().numpy()
         measured_DP = measured_DP.detach().cpu().numpy()
     

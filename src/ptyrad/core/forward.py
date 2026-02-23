@@ -17,14 +17,18 @@ from ptyrad.core.functional import fftshift2
 # Note that element-wise multiplication of tensor (*) is defaulted as out-of-place operation
 # So new tensor is being created and referenced to the old graph to keep the gradient flowing
 
-def multislice_forward(object_patches, probe, H, omode_occu=None, eps=1e-10):
+def multislice_forward(obja_patches, objp_patches, probe, H, omode_occu=None, eps=1e-10):
     """
     Computes the multislice electron diffraction pattern with multiple incoherent probe 
     and object modes using a vectorized forward model.
 
     Args:
-        object_patches (torch.Tensor): Tensor of shape (N, omode, Nz, Ny, Nx, 2), representing
-            pseudo-complex object patches with float32 amplitude and phase components. 
+        obja_patches (torch.Tensor): Tensor of shape (N, omode, Nz, Ny, Nx), representing
+            object amplitude patches with float32. 
+            N is the number of samples in a batch, omode is the number of object modes, 
+            Nz, Ny, Nx are the dimensions of the object patches.
+        objp_patches (torch.Tensor): Tensor of shape (N, omode, Nz, Ny, Nx), representing
+            object phase patches with float32. 
             N is the number of samples in a batch, omode is the number of object modes, 
             Nz, Ny, Nx are the dimensions of the object patches.
         omode_occu (torch.Tensor): Tensor of shape (omode,) with float32 values, representing 
@@ -41,35 +45,41 @@ def multislice_forward(object_patches, probe, H, omode_occu=None, eps=1e-10):
         forward diffraction pattern for each sample in the batch.
     """
     
+    assert obja_patches.shape == objp_patches.shape
+    
     # These .contiguous() are needed for torch.compile in Linux
-    object_patches = object_patches.contiguous()
+    obja_patches = obja_patches.contiguous()
+    objp_patches = objp_patches.contiguous()
     probe = probe.contiguous()
     H = H.contiguous()
 
     # Initialize omode_occu if it's not specified
     if omode_occu is None:
-        objp=  object_patches[...,1]
-        device = objp.device
-        dtype = objp.dtype
-        omode = objp.size(1)
+        device = objp_patches.device
+        dtype = objp_patches.dtype
+        omode = objp_patches.size(1)
         omode_occu = torch.ones(omode, dtype=dtype, device=device) / omode
     
-    # Cast the object back to actual complex tensor
-    object_cplx = torch.polar(object_patches[...,0], object_patches[...,1]).contiguous() # (N, omode, Nz, Ny, Nx)
-    n_slices = object_cplx.shape[2]
+    n_slices = obja_patches.shape[2]
+    
+    # Unbind the Z-dimension (dim=2) BEFORE the loop
+    # This returns a tuple of n_slices independent tensors of shape (N, omode, Ny, Nx)
+    # This is critical for efficient torch.compile triton code generation during .backward(), especially for pytorch >= 2.8.0
+    obja_slices = torch.unbind(obja_patches, dim=2)
+    objp_slices = torch.unbind(objp_patches, dim=2)
     
     # Expand psi to include omode dimension
     psi = probe[:, :, None, :, :].contiguous() # (N, pmode, Ny, Nx) -> (N, pmode, omode, Ny, Nx)
 
     # Propagating each object layer using broadcasting
     for n in range(n_slices-1):
-        object_slice = object_cplx[:, :, n, :, :]  # object_slice -> (N, omode, Ny, Nx)
-        psi = psi * object_slice[:, None, :, :, :] # psi -> (N, pmode, omode, Ny, Nx). Note that psi is always centered in real space
+        object_slice = torch.polar(obja_slices[n], objp_slices[n]) # object_slice -> (N, omode, Ny, Nx)
+        psi = psi * object_slice[:, None, :, :] # psi -> (N, pmode, omode, Ny, Nx). Note that psi is always centered in real space
         psi = ifft2(H[:,None,None] * fft2(psi))    # Note that fft2 and ifft2 are applying to the last 2 axes. Although preshift psi before fft2 would seem more natural, it's nearly 50% slower to do it as fftshift2(ifft2(fft2(ifftshift2(psi)))) 
 
     # Interacting with the last layer, and no propagation is needed afterward
-    object_slice = object_cplx[:, :, n_slices-1, :, :]
-    psi = psi * object_slice[:, None, :, :, :]
+    object_slice = torch.polar(obja_slices[-1], objp_slices[-1])
+    psi = psi * object_slice[:, None, :, :]
 
     # Propagate the object-modified exit wave psi(r) to detector plane into psi(k)
     # The contribution from probe / object modes are incoherently summed together

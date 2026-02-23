@@ -40,7 +40,6 @@ class PtychoModel(torch.nn.Module):
     Attributes:
         device (str): Device to run computations on ('cuda:0' by default).
         detector_blur_std (float): Standard deviation for detector blur, or None if no blur.
-        obj_preblur_std (float): Standard deviation for object pre-blur, or None if no pre-blur.
         lr_params (dict): Learning rate parameters for optimizable tensors.
         opt_obja (torch.Tensor): Amplitude of the object.
         opt_objp (torch.Tensor): Phase of the object.
@@ -77,7 +76,6 @@ class PtychoModel(torch.nn.Module):
             # Setup model behaviors
             self.device                 = device
             self.detector_blur_std      = model_params['detector_blur_std']
-            self.obj_preblur_std        = model_params['obj_preblur_std']
             self.preload_data           = model_params.get('preload_data', True)
             self.meas_loader            = MeasDataLoader(
                 init_variables['measurements'], 
@@ -268,7 +266,6 @@ class PtychoModel(torch.nn.Module):
         logger.info(" ")
         
         logger.info('### Model behavior ###')
-        logger.info(f"Obj preblur               : {True if self.obj_preblur_std is not None else False}")
         logger.info(f"Tilt propagator           : {self.tilt_obj}")
         logger.info(f"Change slice thickness    : {self.change_thickness}")
         logger.info(f"Sub-px probe shift        : {self.shift_probes}")
@@ -278,40 +275,22 @@ class PtychoModel(torch.nn.Module):
         logger.info(f"On-the-fly meas resample  : {True if self.meas_loader.meas_scale_factors is not None else False}")
         logger.info(" ")
     
-    def get_obj_ROI(self, indices):
-        """ Get object ROI with integer coordinates """
-        # It's strongly recommended to do integer version of get_obj_ROI
-        # opt_obj.shape = (B,D,H,W,C) = (omode,D,H,W,2)
-        # object_roi = (N,B,D,H,W,2), N is the additional sample index within the input batch, B is now used for omode.
-        
-        # rpy_grid is the y-grid (Ny,Nx), by adding the y coordinates from init_crop_pos (N,1) in a broadcast way, it becomes (N,Ny,Nx)
-        # obj_ROI_grid_y = (N,Ny,Nx)
-        
-        opt_obj = torch.stack([self.opt_obja, self.opt_objp], dim=-1)
-        obj_ROI_grid_y = self.rpy_grid[None,:,:] + self.crop_pos[indices, None, None, 0]
-        obj_ROI_grid_x = self.rpx_grid[None,:,:] + self.crop_pos[indices, None, None, 1]
-        
-        object_roi = opt_obj[:,:,obj_ROI_grid_y,obj_ROI_grid_x,:].permute(2,0,1,3,4,5)
-        return object_roi
-    
     def get_obj_patches(self, indices):
         """
         Get object patches from specified indices
         
         """
+        # obja_patches = (N,B,D,H,W), N is the additional sample index within the input batch, B is now used for omode.
+        # rpy_grid is the y-grid (Ny,Nx), by adding the y coordinates from init_crop_pos (N,1) in a broadcast way, it becomes (N,Ny,Nx)
+        # obj_ROI_grid_y = (N,Ny,Nx)
         
-        object_patches = self.get_obj_ROI(indices)
+        obj_ROI_grid_y = self.rpy_grid[None,:,:] + self.crop_pos[indices, None, None, 0]
+        obj_ROI_grid_x = self.rpx_grid[None,:,:] + self.crop_pos[indices, None, None, 1]
         
-        if self.obj_preblur_std is None or self.obj_preblur_std == 0:
-            return object_patches
+        obja_patches = self.opt_obja[:,:,obj_ROI_grid_y,obj_ROI_grid_x].permute(2,0,1,3,4).contiguous()
+        objp_patches = self.opt_objp[:,:,obj_ROI_grid_y,obj_ROI_grid_x].permute(2,0,1,3,4).contiguous()
         
-        else:
-            # Permute and reshape approach, this is much faster than the stack/list comprehension version
-            obj = object_patches.permute(5,0,1,2,3,4) # Move the r/i to the front so it's (2,N,B,D,H,W)
-            obj_shape = obj.shape
-            obj = obj.reshape(-1, obj_shape[-2], obj_shape[-1])
-            object_patches = gaussian_blur(obj, kernel_size=5, sigma=self.obj_preblur_std).reshape(obj_shape).permute(1,2,3,4,5,0) # The torchvision Gaussian blur only acts on last 2 dimensions
-            return object_patches
+        return obja_patches, objp_patches
         
     def get_probes(self, indices):
         """ Get probes for each position """
@@ -396,9 +375,9 @@ class PtychoModel(torch.nn.Module):
         
         return probe_prop
     
-    def get_forward_meas(self, object_patches, probes, propagators):
+    def get_forward_meas(self, obja_patches, objp_patches, probes, propagators):
         
-        dp_fwd = multislice_forward(object_patches, probes, propagators, omode_occu=self.omode_occu)
+        dp_fwd = multislice_forward(obja_patches, objp_patches, probes, propagators, omode_occu=self.omode_occu)
         
         if self.detector_blur_std is not None and self.detector_blur_std != 0:
             kernel_size = max(5, 2*round(3*self.detector_blur_std)+1) # Kernel size would have minimum 5, and scale with 6sigma+1
@@ -427,12 +406,12 @@ class PtychoModel(torch.nn.Module):
         # Note that detector blur is a physical process and should be included in the forward method
         # It's a design choice to put it here, instead of putting it under optimization.py
 
-        object_patches = self.get_obj_patches(indices)
-        probes         = self.get_probes(indices)
-        propagators    = self.get_propagators(indices)
-        dp_fwd         = self.get_forward_meas(object_patches, probes, propagators)
+        obja_patches, objp_patches = self.get_obj_patches(indices)
+        probes                     = self.get_probes(indices)
+        propagators                = self.get_propagators(indices)
+        dp_fwd                     = self.get_forward_meas(obja_patches, objp_patches, probes, propagators)
         
         # Keep the object_patches for later object-specific loss
-        self._current_object_patches = object_patches
+        self._current_object_patches = torch.stack([obja_patches, objp_patches], dim=-1)
         
         return dp_fwd

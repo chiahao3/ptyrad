@@ -39,6 +39,14 @@ def load_params(file_path: str, validate: bool = True):
     if params_dict.get('init_params') is not None:
         params_dict['init_params'] = normalize_probe_params(params_dict['init_params'])
     
+    # Additional correction for model_params.obj_preblur_std (temporatily added for smooth transition to v0.1.0b13)
+    if params_dict.get('model_params') is not None:
+        if 'obj_preblur_std' in params_dict.get('model_params'):
+            logger.warning(
+            "WARNING: The 'obj_preblur_std' parameter is deprecated since v0.1.0v13. "
+            "This flag will be ignored.") 
+            params_dict['model_params'].pop('obj_preblur_std')
+    
     # Additional correction for recon_params.if_quiet (temporatily added for smooth transition to v0.1.0b13)
     if params_dict.get('recon_params') is not None:
         if 'if_quiet' in params_dict.get('recon_params'):
