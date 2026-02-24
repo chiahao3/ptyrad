@@ -305,7 +305,8 @@ class PtychoModel(torch.nn.Module):
             probes = imshift_batch(probe, shifts = self.opt_probe_pos_shifts[indices], grid = self.shift_probes_grid)
         else:
             probes = torch.broadcast_to(probe, (indices.shape[0], *probe.shape)) # Broadcast a batch dimension, essentially using same probe for all samples
-        return probes
+
+        return probes.contiguous()
     
     def get_propagators(self, indices):
         """ Get propagators for each position """
@@ -342,25 +343,27 @@ class PtychoModel(torch.nn.Module):
         if tilt_obj and change_thickness:
             # Case 1: Tilts are either non-zero or optimizing, while thickness is optimizing 
             H_opt_dz = torch_phasor(dz * Kz) # H has zero frequency at the corner in k-space
-            return H_opt_dz * torch_phasor(dz * (Ky * torch.tan(tilts_y) + Kx * torch.tan(tilts_x)))
+            propagators = H_opt_dz * torch_phasor(dz * (Ky * torch.tan(tilts_y) + Kx * torch.tan(tilts_x)))
 
         elif tilt_obj and not change_thickness:
             if change_tilt:
                 # Case 2A: Tilts are optimizing, while thickness is fixed
-                return self.H * torch_phasor(dz * (Ky * torch.tan(tilts_y) + Kx * torch.tan(tilts_x)))
+                propagators = self.H * torch_phasor(dz * (Ky * torch.tan(tilts_y) + Kx * torch.tan(tilts_x)))
             else:
                 # Case 2B: Tilts are fixed non-zero values (1,2) or (N,2), while thickness is fixed
                 # Propagator is pre-calculated during init_propagator_vars
-                return self.H_fixed_tilts_full if global_tilt else self.H_fixed_tilts_full[indices]
+                propagators = self.H_fixed_tilts_full if global_tilt else self.H_fixed_tilts_full[indices]
         
         elif not tilt_obj and change_thickness: 
             # Case 3: Tilt is fixed at 0 and thickness is optimizing
             H_opt_dz = torch_phasor(dz * Kz)
-            return H_opt_dz[None,]
+            propagators = H_opt_dz[None,]
             
         else: 
             # Case 4: Tilt is fixed at 0 and thickness is fixed
-            return self.H[None,]
+            propagators = self.H[None,]
+        
+        return propagators.contiguous()
 
     def get_propagated_probe(self, index):
         probe = self.get_probes(index)[0].detach() # (pmode, Ny, Nx), just grab the probe at 1st index
