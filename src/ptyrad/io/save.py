@@ -1,5 +1,5 @@
 """
-Saving functions for PtyRAD outputs including model, arrays, params files, etc.
+PtyRAD-specific saving functions
 
 """
 
@@ -21,6 +21,20 @@ logger = logging.getLogger(__name__)
 ###### These are results saving functions ######
 
 def expand_presets(input_list, presets):
+    """Expands a list of tags by replacing preset keys with their corresponding lists.
+
+    If a tag in the `input_list` exists as a key in the `presets` dictionary, 
+    it is replaced by the list of tags associated with that preset. Duplicates 
+    are removed while preserving the original order of the tags.
+
+    Args:
+        input_list (list of str): The initial list of tags or preset names.
+        presets (dict): A dictionary mapping a preset string to a list of strings.
+
+    Returns:
+        list of str: The expanded list of tags with duplicates removed.
+    """
+    
     expanded = []
     for tag in input_list:
         if tag in presets:
@@ -30,18 +44,18 @@ def expand_presets(input_list, presets):
     return list(dict.fromkeys(expanded))  # Removes duplicates, keeps order
 
 def safe_filename(filepath):
-    """
-    Ensures a filepath is safe across platforms by:
-    1. Converting relative paths to absolute
-    2. Limiting individual components to 255 characters
-    3. Handling total path length restrictions
-    4. Providing feedback when corrections are made
-    
+    """Ensures a filepath is safe and valid across different operating systems.
+
+    This function prevents path-related crashes by:
+    1. Converting relative paths to absolute paths.
+    2. Truncating individual directory or file components to 255 characters.
+    3. Handling the Windows 260-character total path limit by applying the "\\\\?\\" extended-length path prefix if necessary.
+
     Args:
-        filepath: The original filepath to make safe
-    
+        filepath (str): The original filepath to sanitize.
+
     Returns:
-        A modified filepath that should work across platforms
+        str: A modified, cross-platform-safe absolute filepath.
     """
     
     import platform
@@ -122,7 +136,25 @@ def safe_filename(filepath):
     return result_path
 
 def make_save_dict(output_path, model, params, optimizer, niter, indices, batch_losses):
-    ''' Make a dict to save relevant paramerers '''
+    """Compiles the model state, parameters, and optimizer data into a dictionary.
+
+    This explicitly extracts and formats the current runtime attributes from the 
+    model (e.g., actual grid sizes, learning rates) rather than relying solely 
+    on the initial parameter file, as values may have changed during initialization 
+    (e.g., cropping, resampling) or interactive walkthroughs.
+
+    Args:
+        output_path (str): The directory path where results will be saved.
+        model (PtychoModel): The current reconstruction model object.
+        params (dict): The initial configuration dictionary.
+        optimizer (torch.optim.Optimizer): The PyTorch optimizer.
+        niter (int): The current iteration number.
+        indices (list or numpy.ndarray): The batch indices used in the current iteration.
+        batch_losses (dict): A dictionary mapping loss names to lists of batch loss values.
+
+    Returns:
+        dict: A comprehensive dictionary ready for HDF5 serialization.
+    """
     
     avg_losses = {name: np.mean(values) for name, values in batch_losses.items()}
     avg_iter_t = np.mean(model.iter_times)
@@ -181,23 +213,20 @@ def make_save_dict(output_path, model, params, optimizer, niter, indices, batch_
 def save_dict_to_hdf5(
     d: Dict[str, Any], output_path: str, none_sentinel: str = "__NONE__", **kwargs
 ) -> None:
-    """
-    Save a nested Python dictionary to an HDF5 file.
+    """Saves a nested Python dictionary to an HDF5 file.
 
-    Supports common Python, NumPy, and PyTorch types. Non-HDF5-compatible types
-    (e.g., list of tuples, None, etc.) are automatically converted to HDF5-friendly formats.
+    Recursively parses the dictionary and converts common Python, NumPy, and 
+    PyTorch types into HDF5-compatible formats. Non-compatible types (e.g., 
+    lists of tuples, `None`) are converted to safe string representations or sentinels.
+    Integer keys (common in optimizer state dicts) are coerced to strings.
 
-    Note that integer key (e.g. like in optimizer state dict) are coerced to string for HDF5 format.
-    
     Args:
-        d (Dict[str, Any]): The nested dictionary to save.
-        output_path (str): The file path to save the HDF5 output to.
-        none_sentinel (str, optional): String used to represent `None` in HDF5. Defaults to "__NONE__".
-        **kwargs: Additional keyword arguments to pass to `h5py.File()` or `create_dataset()`.
-                  This can include compression settings like `compression="gzip"`, etc.
-
-    Returns:
-        None
+        d (dict): The nested dictionary to serialize.
+        output_path (str): The target file path for the `.hdf5` file.
+        none_sentinel (str, optional): The string used to represent `None` 
+            values in the HDF5 file. Defaults to "__NONE__".
+        **kwargs: Additional keyword arguments passed to `h5py.File.create_dataset()` 
+            (e.g., `compression="gzip"`).
     """
 
     def _recursively_save_dict_to_hdf5(d: Dict[str, Any], h5group: h5py.Group, path="") -> None:
@@ -281,21 +310,27 @@ def make_output_folder(
     loss_params,
     recon_dir_affixes=["default"],
 ):
-    """
-    Generate the output folder name based on reconstruction parameters, model attributes, constraints, and loss settings.
+    """Generates a highly descriptive output folder name based on runtime configurations.
+
+    Constructs a detailed directory name by concatenating abbreviations of the 
+    active reconstruction parameters, model attributes, constraints, and losses. 
+    This allows users to identify the exact settings of a run just by looking 
+    at the folder name.
 
     Args:
-        output_dir (str): Base directory where the output folder will be created.
-        indices (list): List of indices used in the reconstruction.
-        init_params (dict): Initialization parameters for the reconstruction.
-        recon_params (dict): Reconstruction parameters, including settings like prefix, postfix, and batch size.
-        model (object): Model object containing attributes such as probe, object, and optimizer parameters.
-        constraint_params (dict): Constraints applied during reconstruction, such as filters and smoothing.
-        loss_params (dict): Loss parameters used in the reconstruction process.
-        recon_dir_affixes (list): List of tags or presets to include in the folder name. Defaults to ["default"].
+        output_dir (str): The base directory where the output folder will be created.
+        indices (list): The list of indices used in the reconstruction.
+        init_params (dict): Initialization parameters.
+        recon_params (dict): Reconstruction parameters containing naming prefixes/postfixes.
+        model (PtychoModel): The model containing current spatial and optimization attributes.
+        constraint_params (dict): Dictionary of active constraints and filters.
+        loss_params (dict): Dictionary of active loss functions and weights.
+        recon_dir_affixes (list of str, optional): A list of tags or preset keys 
+            dictating which parameters to include in the folder name. 
+            Defaults to ["default"].
 
     Returns:
-        str: Path to the generated output folder.
+        str: The sanitized absolute path to the newly generated output folder.
     """
 
     prefix_time = recon_params.get("prefix_time", False)
@@ -557,6 +592,26 @@ def make_output_folder(
     return output_path
 
 def save_results(output_path, model, params, optimizer, niter, indices, batch_losses, collate_str=''):
+    """Exports the reconstruction model state and renders image outputs.
+
+    This function acts as the main saving hub. Depending on the `save_result` 
+    and `result_modes` specifications in `params`, it saves the full state 
+    to an HDF5 file (including provenance) and renders the complex object and 
+    probe arrays out to `.tif` images with appropriate bit-depth scaling and 
+    dimensional slicing (e.g., z-stacks, sums, or cropped fields of view).
+
+    Args:
+        output_path (str): The directory where files will be written.
+        model (PtychoModel): The reconstruction model.
+        params (dict): The configuration dictionary dictating save preferences.
+        optimizer (torch.optim.Optimizer): The active optimizer.
+        niter (int): The current iteration number.
+        indices (list or numpy.ndarray): The batch indices.
+        batch_losses (dict): The recorded loss values.
+        collate_str (str, optional): An optional string injected into the 
+            filenames (useful for distinguishing multiple concurrent outputs). 
+            Defaults to ''.
+    """
     
     save_result_list = params['recon_params'].get('save_result', ['model', 'obj', 'probe'])
     result_modes = params['recon_params'].get('result_modes')

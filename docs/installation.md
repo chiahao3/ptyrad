@@ -1,3 +1,5 @@
+(reference:installation)=
+
 # Installation
 
 *PtyRAD* package is available on both `PyPI` and `conda-forge`, while the source codes are hosted on `GitHub` with additional demo params files and demo scripts.

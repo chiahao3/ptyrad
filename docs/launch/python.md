@@ -8,22 +8,22 @@ A simple python script for launching *PtyRAD* in **"reconstruction mode"**, whic
 
 ```python
 from ptyrad.params import load_params
+from ptyrad.runtime.device import set_gpu_device
+from ptyrad.runtime.diagnostics import print_system_info
+from ptyrad.runtime.logging import LoggingManager
 from ptyrad.solver import PtyRADSolver
-from ptyrad.utils import print_system_info, set_gpu_device, CustomLogger
 
 LoggingManager(log_file='ptyrad_log.txt', log_dir='auto', prefix_time='datetime', show_timestamp=True)
 
-params_path = "params/tBL_WSe2_reconstruct.yml"
+params_path = "params/examples/tBL_WSe2.yaml"
 
 print_system_info()
-params = load_params(params_path)
-device = set_gpu_device(gpuid=0)
 
-ptycho_solver = PtyRADSolver(params, device=device, logger=logger)
+params = load_params(params_path, validate=True)
+device = set_gpu_device(gpuid=0) # Pass in `gpuid = None` if you don't have access to a CUDA-compatible GPU. Note that running PtyRAD with CPU would be much slower than on GPU.
 
+ptycho_solver = PtyRADSolver(params, device=device)
 ptycho_solver.run()
 ```
 
-> 💡 This is the same example as `ptyrad/demo/scripts/run_ptyrad_quick_example.ipynb`.
-
-If you want to see more internal working mechanism of *PtyRAD*, the `ptyrad/demo/scripts/run_ptyrad_detailed_walkthrough.ipynb` would be a good example.
+> 💡 This is the same example as `ptyrad/tutorials/run_ptyrad.ipynb`.

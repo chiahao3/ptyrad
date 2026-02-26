@@ -1,3 +1,8 @@
+"""
+PyTorch implementation of core functionals like image shifts, blurring, DCT, etc.
+
+"""
+
 from typing import Literal, Optional, Tuple, Union
 
 import numpy as np
@@ -204,6 +209,17 @@ def approx_torch_quantile(t, q, sample_size=16_000_000):
 
 # This is currently used in core/constraints.py > apply_obj_zblur
 def get_gaussian1d(size, std, norm=False):
+    """Generates a 1D Gaussian kernel.
+
+    Args:
+        size (int): The number of points in the output window.
+        std (float): The standard deviation (sigma) of the Gaussian distribution.
+        norm (bool, optional): If True, normalizes the kernel so that its 
+            elements sum to 1. Defaults to False.
+
+    Returns:
+        numpy.ndarray: The 1D Gaussian kernel.
+    """
     from scipy.signal.windows import gaussian as gaussian1d
 
     k = gaussian1d(size, std)
@@ -212,7 +228,27 @@ def get_gaussian1d(size, std, norm=False):
     return k
 
 def gaussian_blur_1d(tensor, kernel_size=5, sigma=0.5):
-    # Note that the F.con1d does not have `padding_mode`, so it's default to be 0 padding, which is not ideal for obja
+    """Applies a 1D Gaussian blur to a PyTorch tensor along its last dimension.
+
+    This uses a 1D convolution with 'replicate' padding to minimize edge artifacts 
+    (compared to standard zero-padding), which is beneficial for processing 
+    object amplitudes.
+
+    Args:
+        tensor (torch.Tensor): The input tensor to blur. The convolution is applied 
+            along the last dimension.
+        kernel_size (int, optional): The number of elements in the Gaussian kernel. 
+            Defaults to 5.
+        sigma (float, optional): The standard deviation of the Gaussian kernel. 
+            Defaults to 0.5.
+
+    Returns:
+        torch.Tensor: The blurred tensor, maintaining the same shape, dtype, 
+        and device as the input.
+        
+    """
+
+    # F.con1d does not have 'padding_mode', so it's default to be 0 padding, which is not ideal for obja
     # tensor_blur = F.conv1d(input=tensor.reshape(-1, 1, tensor.size(-1)), weight=k1d, padding='same').view(*tensor.shape)
 
     dtype  = tensor.dtype

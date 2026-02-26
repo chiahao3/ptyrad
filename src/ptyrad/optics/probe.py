@@ -1,3 +1,8 @@
+"""
+Numpy-based electron / x-ray probe generation functions
+
+"""
+
 import logging
 from typing import Dict, Literal, Tuple, Union
 
@@ -396,24 +401,36 @@ def make_mixed_probe(probe, pmodes, pmode_init_pows):
     return mixed_probe
 
 def hermite_like(fundam, M, N):
-    # %HERMITE_LIKE
-    # % Receives a probe and maximum x and y order M N. Based on the given probe
-    # % and multiplying by a Hermitian function new modes are computed. The modes
-    # % are then orthonormalized.
+    """Generates orthogonal Hermite-like probe modes from a fundamental mode.
     
-    # Input:
-    #   fundam: base function
-    #   X,Y: centered meshgrid for the base function
-    #   M,N: order of the hermite_list basis
-    # Output:
-    #   H: 
-    # Note:
-    #   This function is a python implementation of `ptycho\+core\hermite_like.m` from PtychoShelves with some modification
-    #   Most indexings arr converted from Matlab (start from 1) to Python (start from 0)
-    #   The X, Y meshgrid are moved into the funciton
-    #   The H is modified into (pmode, Ny, Nx) to be consistent with ptyrad
-    #   Note that H would output (M+1)*(N+1) modes, which could be a bit more than the specified pmode
-    
+
+    This function takes a base probe (the fundamental mode) and multiplies it by 
+    Hermitian functions up to a maximum $x$-order $M$ and $y$-order $N$ to compute 
+    higher-order modes. The resulting modes are then iteratively orthonormalized 
+    against all previously generated modes.
+
+    Note:
+        This is a Python implementation ported from `ptycho/+core/hermite_like.m` 
+        in PtychoShelves, with the following modifications:
+        
+        * Array indexing is converted from MATLAB (1-based) to Python (0-based).
+        * The X and Y spatial meshgrids are generated internally rather than passed 
+          as arguments.
+        * The output tensor `H` has the shape `(pmode, Ny, Nx)` to be consistent 
+          with PtyRAD conventions.
+        * The function always outputs $(M+1)(N+1)$ modes, which may be slightly 
+          more than a user's target `pmode` count (requiring subsequent truncation).
+
+    Args:
+        fundam (numpy.ndarray): The base fundamental probe function, 
+            typically a 2D complex array of shape `(Ny, Nx)`.
+        M (int or float): The maximum $x$-order of the Hermite basis.
+        N (int or float): The maximum $y$-order of the Hermite basis.
+
+    Returns:
+        numpy.ndarray: A 3D complex array of the generated orthonormalized modes 
+        with shape `((M+1)*(N+1), Ny, Nx)`.
+    """
     
     # Initialize i/o
     M = M.astype('int')
@@ -457,6 +474,22 @@ def hermite_like(fundam, M, N):
     return H
 
 def sort_by_mode_int_np(modes):
+    """Sorts a set of modes in descending order based on their total intensity.
+
+    The intensity of each mode is calculated as the sum of its squared amplitude 
+    across all spatial dimensions. This is commonly used to ensure the dominant 
+    probe or object modes are positioned at the lowest indices.
+
+    Args:
+        modes (numpy.ndarray): An N-dimensional array of modes, where the first 
+            dimension represents the mode index (e.g., `(pmode, Ny, Nx)` for 2D 
+            modes or `(omode, Nz, Ny, Nx)` for 3D modes).
+
+    Returns:
+        numpy.ndarray: The input array sorted in descending order of total intensity 
+        along the first dimension.
+    """
+    
     spatial_axes = tuple(range(1, modes.ndim))
     modes_int = np.sum(np.abs(modes)**2, axis=spatial_axes)
     indices = np.argsort(modes_int)[::-1]  # sort descending

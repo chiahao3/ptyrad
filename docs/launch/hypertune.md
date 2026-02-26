@@ -9,17 +9,18 @@ Running hypertune with a single GPU is not ideal because each reconstruction tas
 Assuming you're using Slurm on a HPC, the setup is nearly identical with the previous example, except that you provide a params file with `hypertune_params` configured and `if_hypertune: true`.
 
 ```bash
-# This is your `slurm_run_ptyrad.sub` job script
+# This is your `slurm_run_ptyrad_hypertune.sub` job script
 
 ## Set the params_path variable
-PARAMS_PATH="params/tBL_WSe2_hypertune.yml"
+PARAMS_PATH="params/walkthrough/14_hypertune.yaml"
 echo params_path = ${PARAMS_PATH}
 ```
 
 Go to `ptyrad/` root directory, and execute the following command:
 
 ```bash
-# This will submit the same Slurm job 5 times, each job will be running on 1 GPU
+# This will submit the same Slurm job (`slurm_run_ptyrad_hypertune.sub`) 5 times, 
+# each job will be running on 1 GPU
 bash ./scripts/LoopSubmit.sh -n 5 
 ```
 

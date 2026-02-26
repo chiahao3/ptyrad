@@ -4,7 +4,7 @@
 :gutter: 2
 
 :::{grid-item-card} 
-:link: reference:overview
+:link: reference:installation
 :link-type: ref
 :text-align: center
 
@@ -53,7 +53,6 @@ Full API documentation for advanced users who want to know the internals of *Pty
 ```{toctree}
 :hidden:
 :caption: Get Started
-overview
 installation
 quickstart
 ```

@@ -1,3 +1,8 @@
+"""
+Reconstruction provenance handling (load/save)
+
+"""
+
 import datetime
 import json
 import os
@@ -9,8 +14,12 @@ import numpy as np
 
 
 class SafeJSONEncoder(json.JSONEncoder):
-    """
-    Sanitizes scientific types (NumPy, Path) into JSON-safe formats.
+    """Sanitizes scientific types into JSON-safe formats.
+
+    This custom encoder ensures that NumPy numerical types, arrays, 
+    pathlib Path objects, and stray PyTorch tensors can be cleanly 
+    serialized into the provenance JSON string without throwing 
+    TypeErrors.
     """
     def default(self, obj):
         if isinstance(obj, (np.integer, np.int64, np.int32)):
@@ -28,9 +37,19 @@ class SafeJSONEncoder(json.JSONEncoder):
         return super().default(obj)
 
 def collect_provenance(init_params):
-    """
-    Step 1: Init. Returns dict of lists: {'probe': [...], 'obj': [...], ...}
-    Handles 'simu', 'PtyRAD', 'PtyShv', 'py4DSTEM', 'custom', and 'file' sources.
+    """Initializes the provenance tracking dictionary for a new run.
+
+    This function scans the initialization parameters to determine the 
+    origin of the probe, object, positions, and tilts. It handles file 
+    loading (including inheriting provenance from older PtyRAD HDF5 files), 
+    simulations, and in-memory custom arrays.
+
+    Args:
+        init_params (dict): The initialization parameters for the reconstruction.
+
+    Returns:
+        dict: A dictionary mapping component names ('probe', 'pos', 'obj', 'tilt') 
+        to a list of provenance entry dictionaries representing their history.
     """
     import json
     import os
@@ -131,7 +150,16 @@ def collect_provenance(init_params):
     return provenance
 
 def _create_genesis_entry(action, details, name="Unknown Source"):
-    """Updated helper with name field"""
+    """Creates a base provenance entry for a new component.
+
+    Args:
+        action (str): The action that created the component (e.g., 'Simulated').
+        details (dict): Metadata and parameters associated with the action.
+        name (str, optional): A descriptive name or path. Defaults to "Unknown Source".
+
+    Returns:
+        dict: A structured dictionary representing the genesis event.
+    """
     return {
         'uid': str(uuid.uuid4())[:8],
         'timestamp': datetime.datetime.now().isoformat(),
@@ -141,6 +169,22 @@ def _create_genesis_entry(action, details, name="Unknown Source"):
     }
 
 def generate_provenance_json(current_provenance, params, output_filename="current_run"):
+    """Appends the current run details to the provenance timeline and serializes it.
+
+    This safely deepcopies the existing provenance history, appends the current 
+    run's configuration to every component's timeline, and encodes the entire 
+    history into a JSON string using `SafeJSONEncoder`.
+
+    Args:
+        current_provenance (dict): The inherited provenance dictionary.
+        params (dict): The configuration parameters for the current run.
+        output_filename (str or Path, optional): The filename or path identifying 
+            this specific run. Defaults to "current_run".
+
+    Returns:
+        str: A JSON-formatted string of the complete provenance history.
+    """
+    
     import copy
     import os
 
@@ -176,18 +220,33 @@ def generate_provenance_json(current_provenance, params, output_filename="curren
     return json.dumps(final_provenance, cls=SafeJSONEncoder, indent=2)
 
 def save_provenance_to_hdf5(hdf5_path, provenance_json_str):
+    """Saves the serialized provenance JSON string to an HDF5 file attribute.
+
+    Args:
+        hdf5_path (str or Path): The path to the target HDF5 file.
+        provenance_json_str (str): The JSON string representing the history.
+    """
+    
     with h5py.File(hdf5_path, 'r+') as f:
         f.attrs['provenance_json'] = provenance_json_str
         
 def load_provenance_from_h5(file_path):
-    """
-    Reads the 'provenance_json' attribute from an HDF5 file 
-    and returns the parsed Python dictionary.
-    
+    """Reads and parses the provenance history from an HDF5 file.
+
+    Extracts the 'provenance_json' attribute from the root of the specified 
+    HDF5 file and parses it back into a Python dictionary.
+
+    Args:
+        file_path (str or Path): The path to the HDF5 file.
+
     Returns:
-        dict: The lineage dictionary (e.g. {'probe': [...], 'obj': [...]})
-              Returns an empty dict {} if the attribute is missing.
+        dict: The lineage dictionary (e.g., {'probe': [...], 'obj': [...]}). 
+        Returns an empty dict `{}` if the attribute is missing or corrupted.
+
+    Raises:
+        FileNotFoundError: If the specified HDF5 file does not exist.
     """
+    
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"Cannot load provenance: File {file_path} not found.")
 
@@ -205,14 +264,16 @@ def load_provenance_from_h5(file_path):
         return {}
     
 def export_hdf5_provenance_to_json(h5_path, output_json_path=None):
-    """
-    Extracts the provenance history from an HDF5 file and saves it
-    as a standalone, pretty-printed JSON file.
-    
+    """Extracts provenance history from an HDF5 file and saves it as JSON.
+
     Args:
-        h5_path (str): Path to the source .h5 file.
-        output_json_path (str, optional): Path for the output .json file.
-                                          Defaults to '{h5_filename}_provenance.json'.
+        h5_path (str or Path): The path to the source .h5 file.
+        output_json_path (str, optional): The destination path for the .json file. 
+            If None, it defaults to '<h5_filename>_provenance.json' in the same 
+            directory. Defaults to None.
+
+    Returns:
+        str: The path to the generated JSON output file.
     """
     h5_path = str(h5_path) # Handle Path objects
     

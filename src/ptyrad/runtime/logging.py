@@ -1,3 +1,14 @@
+"""
+PtyRAD logging and diagnostic report function.
+
+This module provides a robust logging architecture designed to handle both 
+interactive notebook environments and distributed, multi-GPU training jobs. 
+It features a buffering system to capture early logs before the output 
+directory is known, a rank-zero filter to prevent duplicated logs in 
+distributed runs, and a foolproof `report` function to guarantee critical 
+diagnostics are always visible to the user even a logger is not initialized.
+"""
+
 import io
 import logging
 import os
@@ -16,10 +27,19 @@ VERBOSITY_MAPPING = {'DEBUG': logging.DEBUG,
                     'CRITICAL': logging.CRITICAL}
 
 def report(message, verbosity: Literal['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'] = 'INFO'):
-    """
-    Dual purpose print / log, ensures output reaches the user even if they haven't initialized PtyRAD logging.
-    
-    This report function is used exclusively for diagnostic functions like print_system_info, print_gpu_info, etc.
+    """Dual-purpose logging and printing function for critical diagnostics.
+
+    This function attempts to emit the message through the standard PtyRAD 
+    logging hierarchy. However, if the logger has not been initialized (no 
+    handlers exist) or if the user has set the global logging level higher 
+    than the message's severity, it falls back to a standard Python `print()`. 
+    This ensures vital system information (like GPU errors or missing dependencies) 
+    always reaches the user.
+
+    Args:
+        message (str): The diagnostic message to output.
+        verbosity (Literal['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'], optional): 
+            The logging severity level. Defaults to 'INFO'.
     """
     target_level = VERBOSITY_MAPPING.get(verbosity, logging.INFO)
     logger = logging.getLogger('ptyrad')
@@ -42,10 +62,22 @@ def report(message, verbosity: Literal['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRI
         print(message)
 
 def get_logging_manager():
-    """Access the manager from anywhere in the library."""
+    """Retrieves the currently active logging manager instance.
+
+    Returns:
+        LoggingManager or None: The globally active `LoggingManager` instance, 
+        or None if logging has not yet been initialized.
+    """
     return _active_manager
 
 class RankZeroFilter(logging.Filter):
+    """A logging filter that restricts output to the primary distributed process.
+
+    In a multi-GPU environment (e.g., via PyTorch DistributedDataParallel), 
+    multiple processes run the same script. This filter prevents duplicated 
+    console output and file writes by ensuring only the rank 0 process 
+    is allowed to emit log records.
+    """
     def filter(self, record):
         import sys
         # Only check rank if torch is already loaded in memory
@@ -56,6 +88,14 @@ class RankZeroFilter(logging.Filter):
         return True
 
 class LoggingManager:
+    """Configures and manages the central PtyRAD logging hierarchy.
+
+    This manager initializes console and in-memory buffered handlers upon 
+    creation. The buffer captures all logs generated during early initialization 
+    and parameter loading. Once the final output directory is determined by the 
+    reconstruction loop, `flush_to_file` is called to dump the buffer to disk 
+    and seamlessly transition to standard file-based logging.
+    """
     def __init__(self, 
                  log_file='ptyrad_log.txt', 
                  log_dir='auto', 
@@ -71,6 +111,36 @@ class LoggingManager:
         self.logger = logging.getLogger('ptyrad')
         target_level = VERBOSITY_MAPPING.get(verbosity.upper(), logging.DEBUG)
         self.logger.setLevel(target_level)
+        """Initializes the LoggingManager and attaches standard handlers.
+
+        Warning:
+            The `prefix_date` argument is deprecated and will be removed by August 2025. 
+            Please transition to using `prefix_time`.
+
+        Args:
+            log_file (str or None, optional): The name of the log file. If None, 
+                file logging is entirely disabled. Defaults to 'ptyrad_log.txt'.
+            log_dir (str, optional): The directory where the log file will be saved. 
+                If 'auto', it defaults to the reconstruction `output_path` or a local 
+                'logs/' folder. Defaults to 'auto'.
+            prefix_time (str or bool, optional): A format string or preset ('datetime', 
+                'time', 'date') to prepend a timestamp to the log filename. 
+                Defaults to 'datetime'.
+            prefix_date (str, optional): Legacy argument for `prefix_time`. 
+                Defaults to None.
+            prefix_jobid (int or str, optional): An identifier (e.g., SLURM job ID 
+                or hypertune rank) to prepend to the log filename. Defaults to 0.
+            append_to_file (bool, optional): If True, appends to an existing log 
+                file. If False, overwrites it. Defaults to True.
+            show_timestamp (bool, optional): If True, prepends the date and time 
+                to every line in the log output. Defaults to True.
+            show_config (bool, optional): If True, immediately logs the current 
+                manager configuration upon initialization. Defaults to True.
+            verbosity (Literal['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'], optional): 
+                The minimum severity level required for a message to be logged. 
+                Defaults to 'DEBUG'.
+            **kwargs: Additional keyword arguments.
+        """
         
         # Clear all existing handlers to re-instantiate the logger
         if self.logger.hasHandlers():

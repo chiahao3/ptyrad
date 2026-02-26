@@ -1,5 +1,5 @@
 """
-Parameter subpackage that define pydantic models for filling defaults, and validating items from PtyRAD params files
+Pydantic schema models for filling defaults, and validating entries from PtyRAD params files
 
 """
 

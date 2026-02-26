@@ -21,6 +21,9 @@ from .commands import (
 from ptyrad.runtime.logging import VERBOSITY_MAPPING
 
 def main():
+    """
+    Main function for PtyRAD CLI
+    """
     parser = argparse.ArgumentParser(
         description="PtyRAD Command-Line Interface",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
@@ -41,13 +44,13 @@ def main():
     parser_params.set_defaults(func=get_params)
 
     # get-templates
-    parser_temp = subparsers.add_parser("get-templates", help="Copy clean templates params only")
+    parser_temp = subparsers.add_parser("get-templates", help="Copy clean templates params files")
     parser_temp.add_argument("dest", nargs="?", default=".", help="Destination directory")
     parser_temp.add_argument("--force", "-f", action="store_true", help="Overwrite existing folder")
     parser_temp.set_defaults(func=get_templates)
 
     # get-examples
-    parser_ex = subparsers.add_parser("get-examples", help="Copy examples params only")
+    parser_ex = subparsers.add_parser("get-examples", help="Copy examples params files")
     parser_ex.add_argument("dest", nargs="?", default=".", help="Destination directory")
     parser_ex.add_argument("--force", "-f", action="store_true", help="Overwrite existing folder")
     parser_ex.set_defaults(func=get_examples)
@@ -86,7 +89,7 @@ def main():
     parser_validate.set_defaults(func=validate_params)
 
     # gui (placeholder) #TODO 
-    parser_gui = subparsers.add_parser("gui", help="Launch GUI (not implemented)")
+    parser_gui = subparsers.add_parser("gui", help="Launch GUI (not implemented yet)")
     parser_gui.set_defaults(func=gui)
 
     args = parser.parse_args()

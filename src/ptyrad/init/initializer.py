@@ -45,6 +45,9 @@ from ptyrad.utils.affine import compose_affine_matrix
 logger = logging.getLogger(__name__)
 
 class Initializer:
+    """
+    Numpy-based general purpose initializer used for initializing diffraction patterns, object, probe, scan patterns, etc.
+    """
     def __init__(self, init_params, seed=None):
         
         # A deepcopy creates a new object so modifying self.init_params won't affect the original init_params dict that was outside the class
@@ -110,6 +113,9 @@ class Initializer:
         logger.info(" ")
         
     def init_measurements(self):
+        """
+        Initialize diffraction patterns by loading and then processing it.
+        """
         logger.info("### Initializing measurements ###")
 
         meas = self._load_meas()
@@ -143,6 +149,9 @@ class Initializer:
         logger.info(" ")
 
     def init_calibration(self):
+        """
+        Setting up reconstruction calibration (i.e., real and k-space pixel size)
+        """
         logger.info("### Setting up calibration ###")
 
         calib_dict  = self.init_params['meas_calibration']
@@ -259,6 +268,9 @@ class Initializer:
         logger.info(" ")
 
     def set_variables_dict(self):
+        """
+        Initialize and set the `init_variables` dict used for downstream reconstructions
+        """
         logger.info("### Setting init_variables dict ###")
         
         # Note that the self.init_params can be modified by _meas_crop and other methods
@@ -523,6 +535,9 @@ class Initializer:
         logger.info(" ")
     
     def init_check(self):
+        """
+        Consistency check between input params with the initialized variables
+        """
         # Although some of the input experimental parameters might not be used directly by the package
         # I think it's a good practice to check for overall consistency and remind the user to check carefully
         # While these check could be performed within the init methods and achieve early return
@@ -619,6 +634,9 @@ class Initializer:
         logger.info("Reconstruction provenance is collected and initialized.")
     
     def init_all(self):
+        """
+        Master init method that initializes all methods
+        """
         # Run this method to initialize all
         
         self.init_cache()

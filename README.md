@@ -93,7 +93,7 @@ pip install -U ptyrad
 > 💡 **Note:** *PtyRAD* now includes a **starter kit** that sets up the folder structure, tutorial notebooks, scripts, and example params files for you, with just one line of code!
 
 ### 1. Initialize a Workspace
-Run the following command to create a new folder (e.g., `ptyrad_demo`) containing all necessary templates and scripts:
+Run the following command to create a new folder (e.g., `ptyrad/`) containing all necessary templates and scripts:
 
 ```bash
 # Activate your (ptyrad) python environment
@@ -130,7 +130,7 @@ Now you're ready to run a quick demo using one of two interfaces:
 - **Command-line interface** (like your *Miniforge Prompt* terminal)
     ```bash
     # Assume working directory is at `ptyrad/` and (ptyrad) environment is activated
-    ptyrad run "params/examples/tBL_WSe2_reconstruct.yaml"
+    ptyrad run "params/examples/tBL_WSe2.yaml"
     ```
 
 ## Documentation

@@ -1,3 +1,8 @@
+"""
+Get time from datetime and parse time to string
+
+"""
+
 from typing import Union
 
 def get_time(time_format: Union[bool, str, None] = 'date') -> str:

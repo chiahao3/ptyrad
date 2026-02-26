@@ -1,3 +1,8 @@
+"""
+Translates between torch.tensor and np.array
+
+"""
+
 import numpy as np
 import torch
 

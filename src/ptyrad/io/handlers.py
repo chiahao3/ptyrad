@@ -1,3 +1,8 @@
+"""
+High-level file handlers (load/save) for generic and hierarchical file formats
+
+"""
+
 import logging
 import os
 from typing import List, Optional, Tuple

@@ -1,3 +1,8 @@
+"""
+Hierarchical file handling (load/save) for pt, mat, hdf5 formats
+
+"""
+
 import os
 from typing import Any, List, Optional, Union
 import logging
@@ -11,6 +16,28 @@ KeyType = Union[str, list[str], None]
 logger = logging.getLogger(__name__)
 
 def load_pt(file_path, weights_only=False):
+    """Loads data from a PyTorch .pt file.
+
+    Warning:
+        This function defaults to `weights_only=False` because PtyRAD .pt files 
+        often contain complex objects and dictionaries, not just state dictionaries. 
+        As of PyTorch 2.6, `torch.load` defaults to `weights_only=True` for security. 
+        Loading with `weights_only=False` can execute arbitrary code if the file 
+        contains malicious payloads. Only use this function to load trusted, 
+        legacy PtyRAD-generated files.
+
+    Args:
+        file_path (str): The path to the PyTorch .pt file.
+        weights_only (bool, optional): If True, restricts the unpickler to load 
+            only tensors, primitive types, and dictionaries. Defaults to False.
+
+    Returns:
+        Any: The deserialized Python object(s) stored in the file.
+
+    Raises:
+        FileNotFoundError: If the specified file does not exist.
+    """
+    
     import torch
 
     # Check if the file exists
@@ -490,6 +517,22 @@ def list_nested_keys(hobj, delimiter=".", prefix=""):
     return keys
 
 def print_nested_dict(d, indent=0, leaf_inline_threshold=6):
+    """Recursively logs a nested dictionary with structured formatting.
+
+    To improve log readability and save vertical space, small "leaf" dictionaries 
+    (dictionaries containing no further nested dicts or lists) are printed inline 
+    on a single line, provided their length does not exceed `leaf_inline_threshold`. 
+    Flat lists are also printed inline.
+
+    Args:
+        d (dict): The dictionary to log.
+        indent (int, optional): The current indentation level (number of tabs). 
+            Defaults to 0.
+        leaf_inline_threshold (int, optional): The maximum number of key-value 
+            pairs a flat leaf dictionary can have to be formatted inline. 
+            Defaults to 6.
+    """
+    
     indent_str = "    " * indent
     for key, value in d.items():
         if isinstance(value, dict):

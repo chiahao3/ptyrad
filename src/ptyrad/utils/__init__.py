@@ -1,4 +1,4 @@
 """
-Utility functions for logging, timing, image processing, etc.
+Utility functions including time parsing, affine transformation, image processing, and dev tools
 
 """

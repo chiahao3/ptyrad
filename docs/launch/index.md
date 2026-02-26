@@ -5,8 +5,8 @@
 You can launch *PtyRAD* with many different approaches once it's installed in your Python environment.
 
 For example, you can:
-1. Run the demo Jupyter notebooks under `ptyrad/demo/scripts/`
-2. Launch with CLI tools from your terminal as simple as `ptyrad run --params_path <FILE_PATH>`
+1. Run the tutorial Jupyter notebooks under `ptyrad/tutorials/run_ptyrad.ipynb`
+2. Launch with CLI tools from your terminal as simple as `ptyrad run <PARAMS_FILE_PATH>`
 3. Use a Slurm job script like `ptyrad/scripts/slurm_run_ptyrad.sub`
 
 For all the launching method, *PtyRAD* supports 2 operation modes:

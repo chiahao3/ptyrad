@@ -1,3 +1,12 @@
+"""
+System and environment diagnostic reporting.
+
+This module provides utilities to query and log the current hardware 
+(CPU, Memory, GPU) and software (OS, Python, dependencies) environment. 
+It includes specific support for detecting SLURM cluster allocations and 
+identifying NVIDIA Multi-Instance GPU (MIG) configurations.
+"""
+
 import logging
 import subprocess
 
@@ -7,11 +16,18 @@ logger = logging.getLogger(__name__)
 
 
 def is_mig_enabled():
-    """
-    Detects if any GPU on the system is operating in MIG (Multi-Instance GPU) mode.
+    """Detects if any NVIDIA GPU on the system is operating in MIG mode.
     
+
+    Multi-Instance GPU (MIG) allows a physical GPU to be securely partitioned 
+    into multiple separate GPU instances. This function queries `nvidia-smi` 
+    to check if this hardware partitioning is currently active, which is 
+    important because certain multi-GPU communication backends (like NCCL) 
+    do not fully support MIG slices.
+
     Returns:
-        bool: True if MIG mode is enabled on any GPU, False otherwise.
+        bool: True if MIG mode is enabled on any detected GPU, False if it 
+        is disabled, or if the detection fails (e.g., `nvidia-smi` not found).
     """
     try:
         # Run the `nvidia-smi` command to query MIG mode
@@ -44,6 +60,14 @@ def is_mig_enabled():
         return False
 
 def print_system_info():
+    """Logs comprehensive system hardware and operating system information.
+
+    This function records the OS platform, processor architecture, available 
+    CPU cores, and system memory. It automatically detects if the code is 
+    running inside a SLURM job allocation and reports the SLURM-restricted 
+    resources instead of the total physical node resources. It subsequently 
+    triggers GPU and package diagnostics.
+    """
     import os
     import platform
     import sys
@@ -100,6 +124,15 @@ def print_system_info():
     report(" ")
 
 def print_gpu_info():
+    """Logs physical GPU hardware and CUDA details.
+
+    Detects and reports available compute backends, including NVIDIA CUDA 
+    and Apple Silicon MPS. For CUDA devices, it logs the compute capability 
+    (warning if insufficient for Triton compilation) and checks for active 
+    MIG partitions. It also provides actionable troubleshooting tips if a 
+    GPU is expected but cannot be found by PyTorch.
+    """
+    
     report("### GPU information ###")
     try:
         import torch
@@ -138,6 +171,15 @@ def print_gpu_info():
         report("         See https://github.com/chiahao3/ptyrad for PtyRAD installation guide.")
     
 def print_packages_info():
+    """Logs installed versions of critical Python dependencies.
+
+    Reports the environment versions of Numpy, PyTorch, Optuna, and Accelerate. 
+    Crucially, it checks the runtime version of the `ptyrad` package against 
+    the installation metadata to detect "stale metadata" scenarios common in 
+    editable (`pip install -e .`) installs, warning the user if a mismatch 
+    is found.
+    """
+    
     import importlib
     import importlib.metadata
     report("### Packages information ###")

@@ -14,18 +14,13 @@ For typical usage, see the Using PtyRAD and Tutorials sections.
    :recursive:
 
    ptyrad.cli
+   ptyrad.core
+   ptyrad.init
+   ptyrad.io
+   ptyrad.optics
    ptyrad.params
+   ptyrad.plotting
+   ptyrad.runtime
    ptyrad.solver
-   ptyrad.reconstruction
-   ptyrad.hypertune
-   ptyrad.initialization
-   ptyrad.dataloader
-   ptyrad.models
-   ptyrad.forward
-   ptyrad.losses
-   ptyrad.constraints
-   ptyrad.load
-   ptyrad.save
-   ptyrad.visualization
    ptyrad.utils
 ```

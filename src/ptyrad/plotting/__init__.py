@@ -1,5 +1,5 @@
 """
-Visualization subpackage that defines plotting functions for summary figures
+Visualization functions for summary figures
 
 """
 

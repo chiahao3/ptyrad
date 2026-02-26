@@ -1,5 +1,5 @@
 """
-Loading functions for different file types including .mat, .hdf5, .tif, .raw, .yaml, etc.
+PtyRAD-specific loading function
 
 """
 

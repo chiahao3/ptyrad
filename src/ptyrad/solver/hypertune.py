@@ -1,5 +1,5 @@
 """ 
-Hypertune / Optuna related functions 
+Hypertune / Optuna workflow related functions 
 
 """
 
@@ -33,6 +33,33 @@ logger = logging.getLogger(__name__)
 # ==============================================================================
     
 def create_optuna_sampler(sampler_params):
+    """Creates an Optuna sampler instance from a configuration dictionary.
+    
+    
+    This factory function supports all standard Optuna samplers except 
+    `PartialFixedSampler` (which requires a sequential setup). Different 
+    samplers require specific configurations; for example, `GridSampler` 
+    requires a fully defined `search_space` mapped within the `configs` 
+    dictionary, and will ignore any step/range setups defined elsewhere 
+    in the tuning parameters.
+
+    For standard PtyRAD hyperparameter tuning, the recommended setup is 
+    the Tree-structured Parzen Estimator (TPE):
+    `{'name': 'TPESampler', 'configs': {'multivariate': True, 'group': True, 'constant_liar': True}}`
+
+    Args:
+        sampler_params (dict): A dictionary defining the sampler. Must contain 
+            a 'name' key (str) specifying the Optuna sampler class (e.g., 
+            'TPESampler', 'GridSampler'). Can optionally contain a 'configs' 
+            key (dict) with keyword arguments for the sampler's constructor.
+
+    Returns:
+        optuna.samplers.BaseSampler: The instantiated Optuna sampler object.
+
+    Raises:
+        ValueError: If the specified sampler name is 'PartialFixedSampler' 
+            or is not a recognized class within `optuna.samplers`.
+    """
     # Note that this function supports all Optuna samplers except "PartialFixedSampler" because it requires a sequential sampler setup
     # Different samplers have different available configurations so please refer to https://optuna.readthedocs.io/en/stable/reference/samplers/index.html for more details
     # For example, GridSampler would need to pass in the 'search_space' so you need to explicitly specify every target variable range in 'sampler_params' : {'name': GridSampler, 'configs': {'search_space': {'optimizer': ['Adam', 'AdamW', 'RMSprop'], 'batch_size': [16,24,32,64,128,256,512], 'oalr': [1.0e-4, 1.0e-3, 1.0e-2], 'oplr': [1.0e-4, 1.0e-3, 1.0e-2]}}}
@@ -60,6 +87,36 @@ def create_optuna_sampler(sampler_params):
     return sampler
 
 def create_optuna_pruner(pruner_params):
+    """Creates an Optuna pruner instance for early termination of unpromising trials.
+    
+
+    This factory function supports all standard Optuna pruners except 
+    `WilcoxonPruner` (which requires nested evaluation). It handles nested 
+    pruner instantiations automatically, such as when using a `PatientPruner` 
+    that requires a `wrapped_pruner_configs` dictionary inside its `configs` 
+    to define its base pruner.
+
+    Note that the objective function must contain iterative steps for pruning 
+    to take effect. For standard PtyRAD hyperparameter tuning, the recommended 
+    setup is Hyperband:
+    `{'name': 'HyperbandPruner', 'configs': {'min_resource': 5, 'reduction_factor': 2}}`
+
+    Args:
+        pruner_params (dict or None): A dictionary defining the pruner. Must 
+            contain a 'name' key (str) specifying the Optuna pruner class 
+            (e.g., 'HyperbandPruner', 'PatientPruner'). Can optionally contain 
+            a 'configs' key (dict) with keyword arguments for the constructor. 
+            If None is passed, the function returns None (disabling pruning).
+
+    Returns:
+        optuna.pruners.BasePruner or None: The instantiated Optuna pruner object, 
+        or None if `pruner_params` is None.
+
+    Raises:
+        ValueError: If the specified pruner is 'WilcoxonPruner', 'NopPruner' 
+            (which should be bypassed by setting `pruner_params = None` instead), 
+            or is not a recognized class within `optuna.pruners`.
+    """
     # Note that this function supports all Optuna pruners except "WilcoxonPruner" because it requires a nested evaluation setup
     # Different pruners have different available configurations so please refer to https://optuna.readthedocs.io/en/stable/reference/pruners.html for more details
     # PatientPruner and PercentilePruner have required fields that need to be passed in with 'configs'
@@ -356,7 +413,9 @@ def optuna_objective(trial, params, init, loss_fn, constraint_fn, device='cuda')
 # ==============================================================================
 
 def get_optuna_suggest(trial, suggest, name, kwargs):
-    
+    """
+    Helper function to get Optuna's trial.suggest_X methods
+    """
     if suggest == 'cat':
         return trial.suggest_categorical(name, **kwargs)
     elif suggest == 'int':
@@ -378,7 +437,9 @@ def compute_optuna_error(model, indices, metric):
         raise ValueError(f"Unsupported hypertune error metric: '{metric}'. Expected 'contrast' or 'loss'.")
     
 def parse_hypertune_params_to_str(hypertune_params):
-    
+    """
+    Helper function to parse hypertune params to strings for appending
+    """
     hypertune_str = ''
     for key, value in hypertune_params.items():
         if key[-2:].lower() == "lr":

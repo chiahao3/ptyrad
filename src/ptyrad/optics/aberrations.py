@@ -1,3 +1,7 @@
+"""
+Aberrations class for aberration coefficients parsing and conversion
+"""
+
 from __future__ import annotations
 
 from collections import defaultdict

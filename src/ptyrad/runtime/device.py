@@ -1,9 +1,34 @@
+"""
+Runtime environment and hardware configuration.
+
+This module handles the initialization of PyTorch device settings and 
+HuggingFace Accelerate environments, enabling seamless transitions 
+between single-GPU, multi-GPU, CPU, and Apple Silicon (MPS) runtimes.
+"""
+
+from typing import Literal, Optional, Union
 import logging
 
 logger = logging.getLogger(__name__)
 
 def set_accelerator():
+    """Initializes the HuggingFace Accelerator for distributed training.
 
+    This function attempts to load `accelerate` and configure it for PtyRAD's 
+    specific needs. It enables `split_batches=True` for data loaders and sets 
+    `find_unused_parameters=True` for DistributedDataParallel (DDP) to prevent 
+    crashes when toggling gradients dynamically between iterations. It also 
+    verifies that the requested number of processes does not exceed the available 
+    hardware.
+
+    Returns:
+        accelerate.Accelerator or None: The initialized Accelerator object if 
+        the library is available and correctly configured, otherwise None.
+
+    Raises:
+        ValueError: If the configured number of accelerate processes exceeds 
+            the actual number of available GPUs on the system.
+    """
     try:
         import torch
         from accelerate import Accelerator, DataLoaderConfiguration, DistributedDataParallelKwargs
@@ -37,18 +62,28 @@ def set_accelerator():
     logger.info(" ")
     return accelerator
 
-def set_gpu_device(gpuid=0):
-    """
-    Sets the GPU device based on the input. If 'acc' is passed, it returns None to defer to accelerate.
+def set_gpu_device(gpuid: Optional[Union[Literal["acc", "cpu"], int]] = 0):
+    """Sets the default PyTorch computation device.
+
+    If 'acc' is passed, device management is explicitly deferred to the 
+    HuggingFace Accelerator. Otherwise, it configures the global PyTorch 
+    default device to the requested CUDA GPU, Apple Silicon (MPS), or CPU, 
+    handling fallbacks automatically if the requested hardware is unavailable.
     
     Args:
-        gpuid (str or int): The GPU ID to use. Can be:
-            - "acc": Defer device assignment to accelerate.
-            - "cpu": Use CPU.
-            - An integer (or string representation of an integer) for a specific GPU ID. This only has effect on NVIDIA GPUs.
+        gpuid (str or int, optional): The device identifier to use. Can be:
+        
+            * "acc": Defer device assignment to accelerate.
+            * "cpu": Force execution on the CPU.
+            * An integer (or string representation of an integer) for a 
+              specific NVIDIA GPU ID. Defaults to 0.
     
     Returns:
-        torch.device or None: The selected device, or None if deferred to accelerate.
+        torch.device or None: The selected PyTorch device object, or None if 
+        assignment was deferred to accelerate.
+
+    Raises:
+        ValueError: If `gpuid` cannot be parsed as 'acc', 'cpu', or an integer.
     """
     import torch
     
