@@ -2,6 +2,10 @@
 
 # Launch PtyRAD
 
+<iframe width="560" height="315" src="https://www.youtube.com/embed/DjshvSWDReg?si=tYdxs2Xu-tuGhnCW" title="PtyRAD YouTube Installation" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen style="margin-bottom: 20px; border-radius: 8px;"></iframe>
+
+> 💡 This video was recorded for **Ptychography Summer School at Cornell 2025**, which has additional access to SciServer, and a slightly different demo folder structure.
+
 You can launch *PtyRAD* with many different approaches once it's installed in your Python environment.
 
 For example, you can:

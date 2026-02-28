@@ -3,14 +3,16 @@
 [![PyPI Downloads](https://static.pepy.tech/badge/ptyrad)](https://pepy.tech/projects/ptyrad)
 [![Anaconda-Server Badge](https://anaconda.org/conda-forge/ptyrad/badges/version.svg)](https://anaconda.org/conda-forge/ptyrad)
 [![Anaconda-Server Badge](https://anaconda.org/conda-forge/ptyrad/badges/latest_release_date.svg)](https://anaconda.org/conda-forge/ptyrad)
-[![arXiv](https://img.shields.io/badge/arXiv-2505.07814-b31b1b.svg)](https://arxiv.org/abs/2505.07814)
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.15392805.svg)](https://doi.org/10.5281/zenodo.15392805)
+[![Paper](https://img.shields.io/badge/Paper-10.1093/mam/ozaf070-blue)](https://academic.oup.com/mam/article/doi/10.1093/mam/ozaf070/8222545?utm_source=authortollfreelink&utm_campaign=mam&utm_medium=email&guestAccessKey=e9e13516-273a-4e46-bec4-7488e9001d7d)
+[![Zenodo](https://zenodo.org/badge/DOI/10.5281/zenodo.15392805.svg)](https://doi.org/10.5281/zenodo.15392805)
 
 [**Docs**](https://ptyrad.readthedocs.io/en/latest/index.html)
 | [**Install Guide**](https://ptyrad.readthedocs.io/en/latest/installation.html)
 | [**Quickstart**](https://ptyrad.readthedocs.io/en/latest/quickstart.html)
-| [**Paper**](https://arxiv.org/abs/2505.07814)
+| [**Paper**](https://academic.oup.com/mam/article/doi/10.1093/mam/ozaf070/8222545?utm_source=authortollfreelink&utm_campaign=mam&utm_medium=email&guestAccessKey=e9e13516-273a-4e46-bec4-7488e9001d7d)
 | [**Youtube**](https://www.youtube.com/@ptyrad_official)
+
+<img src="docs/_static/imgs/exp_examples.png" alt="PtyRAD Examples" width="800">
 
 *PtyRAD* performs ptychographic reconstruction using an [automatic differention](https://en.wikipedia.org/wiki/Automatic_differentiation) (AD) framework powered by [*PyTorch*](https://pytorch.org/), enabling flexible and efficient implementation of gradient descent optimization. See our [Microscopy and Microanalysis paper](https://academic.oup.com/mam/article/doi/10.1093/mam/ozaf070/8222545?utm_source=authortollfreelink&utm_campaign=mam&utm_medium=email&guestAccessKey=e9e13516-273a-4e46-bec4-7488e9001d7d) and the [Zenodo record](https://doi.org/10.5281/zenodo.15273176) for more information and demo datasets.
 
@@ -170,6 +172,27 @@ Chia-Hao Lee (cl2696@cornell.edu)
 
 Developed at the Muller Group, Cornell University.
 
+## Citing PtyRAD
+
+If you use *PtyRAD* in your research, we kindly ask that you cite our [main paper](https://academic.oup.com/mam/article/31/4/ozaf070/8222545):
+
+> Lee, C. H., Zeltmann, S. E., Yoon, D., Ma, D., & Muller, D. A. (2025). PtyRAD: A high-performance and flexible ptychographic reconstruction framework with automatic differentiation. Microscopy and Microanalysis, 31(4), ozaf070.
+
+You can also use the following .bib for BibTex.
+
+```bibtex
+@article{lee2025ptyrad,
+  title={PtyRAD: A high-performance and flexible ptychographic reconstruction framework with automatic differentiation},
+  author={Lee, Chia-Hao and Zeltmann, Steven E and Yoon, Dasol and Ma, Desheng and Muller, David A},
+  journal={Microscopy and Microanalysis},
+  volume={31},
+  number={4},
+  pages={ozaf070},
+  year={2025},
+  publisher={Oxford University Press US}
+}
+```
+
 ## Acknowledgments
 
 Besides great support from the entire Muller group, this package gets inspiration from lots of community efforts, and specifically from the following packages. Some of the functions in *PtyRAD* are directly translated or modified from these packages as noted in their docstrings/comments to give explicit acknowledgment.
@@ -184,4 +207,6 @@ Besides great support from the entire Muller group, this package gets inspiratio
 * [ptycho-packages](https://github.com/chiahao3/ptycho-packages) lists many available ptychography packages
 * [Cornell Box folder](https://cornell.box.com/s/n5balzf88jixescp9l15ojx7di4xn1uo) compiled by myself that keeps demo data, tutorial recordings, and slides for PtyRAD
 * [Argonne Box folder](https://anl.box.com/s/f7lk410lf62rnia70fztd5l7n567btyv) compiled by Dr. Yi Jiang that holds tutorial slides of `fold_slice`
-* [Blog post](https://chiahao-blog.super.site/posts/theory-algorithm-and-code-structure-of-ptychoshelves) written by myself that details the algorithms and code structure of `PtychoShelves` / `fold_slice`
+* [Blog post](https://chiahao3.notion.site/Theory-Algorithm-and-Code-structure-of-PtychoShelves-c7bf28a1068c4a4f90aa77272602ab19) written by myself that details the algorithms and code structure of `PtychoShelves` / `fold_slice`
+* [py4D-browser-transform](https://github.com/chiahao3/py4D-browser-transform): A plugin for [py4D-browser](https://github.com/sezelt/py4D-browser) that provides utility functions for transforming the datacube, currently including flipping, transposing, permuting axes.
+    ![Demo GIF](https://github.com/chiahao3/py4D-browser-transform/raw/main/assets/demo.gif)

@@ -2,6 +2,8 @@
 
 # Installation
 
+<iframe width="560" height="315" src="https://www.youtube.com/embed/s6g_ECaObAY?si=AwDjhislownTR2r4" title="PtyRAD YouTube Installation" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen style="margin-bottom: 20px; border-radius: 8px;"></iframe>
+
 *PtyRAD* package is available on both `PyPI` and `conda-forge`.
 
 ## Platform and hardware compatibility

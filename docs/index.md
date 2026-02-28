@@ -1,5 +1,9 @@
 # Welcome to PtyRAD!
 
+Here's a short introductory video about PtyRAD on our official Youtube channel!
+
+<iframe width="560" height="315" src="https://www.youtube.com/embed/XQ6wsMe9DZ0?si=uOmpR33H-InvpOD9" title="PtyRAD YouTube Channel" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen style="margin-bottom: 20px; border-radius: 8px;"></iframe>
+
 ::::{grid} 1 1 2 2
 :gutter: 2
 
@@ -14,7 +18,7 @@ Follow our quick-start guide to install the package and run your first ptychogra
 :::
 
 :::{grid-item-card}
-:link: reference:params
+:link: reference:launch
 :link-type: ref
 :text-align: center
 
@@ -78,4 +82,7 @@ templates/index
 :caption: Reference
 changelog
 api/index
+citation
+bibliography
+resources
 ```

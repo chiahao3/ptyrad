@@ -4,6 +4,13 @@
 
 Here we provide a couple example params files with publicly available datasets.
 
+```{image} ../_static/imgs/exp_examples.png
+:alt: PtyRAD Examples
+:width: 800px
+:align: center
+
+```
+
 ```{toctree}
 :maxdepth: 2
 :hidden:
