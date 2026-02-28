@@ -127,7 +127,7 @@ def _export_resource(resource_subpath: str, dest_name: str, dest_parent: str = "
 
 def export_params(dest_dir: str = ".", force: bool = False):
     """
-    Copies the entire 'demo/params/' folder (including templates/ and examples/) locally.
+    Copies the entire 'starter/params/' folder (including templates/, examples/, walkthrough/) locally.
     """
     _export_resource(
         resource_subpath="params",
@@ -139,7 +139,7 @@ def export_params(dest_dir: str = ".", force: bool = False):
 
 def export_templates(dest_dir: str = ".", force: bool = False):
     """
-    Copies only the 'demo/params/templates/' folder locally.
+    Copies only the 'starter/params/templates/' folder locally.
     """
     _export_resource(
         resource_subpath="params/templates",
@@ -151,7 +151,7 @@ def export_templates(dest_dir: str = ".", force: bool = False):
 
 def export_examples(dest_dir: str = ".", force: bool = False):
     """
-    Copies only the 'demo/params/examples/' folder locally.
+    Copies only the 'starter/params/examples/' folder locally.
     """
     _export_resource(
         resource_subpath="params/examples",
@@ -159,4 +159,16 @@ def export_examples(dest_dir: str = ".", force: bool = False):
         dest_parent=dest_dir,
         force=force,
         description="Explicit examples"
+    )
+    
+def export_walkthrough(dest_dir: str = ".", force: bool = False):
+    """
+    Copies only the 'starter/params/walkthrough/' folder locally.
+    """
+    _export_resource(
+        resource_subpath="params/walkthrough",
+        dest_name="walkthrough",
+        dest_parent=dest_dir,
+        force=force,
+        description="Walkthrough params"
     )

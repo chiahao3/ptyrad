@@ -26,4 +26,4 @@ ptycho_solver = PtyRADSolver(params, device=device)
 ptycho_solver.run()
 ```
 
-> 💡 This is the same example as `ptyrad/tutorials/run_ptyrad.ipynb`.
+> 💡 This is the same example as `ptyrad/notebooks/run_ptyrad.ipynb`.

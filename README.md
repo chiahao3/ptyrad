@@ -106,11 +106,39 @@ ptyrad init # or `ptyrad init <FOLDER_NAME> to use custom folder name
 cd ptyrad/
 ```
 
+The initialize workspace folder structure will look like this:
+
+```text
+ptyrad/
+├── data/             # Default directory for storing your 4D-STEM datasets
+├── notebooks/        # Jupyter notebooks for common workflows and interactive analyses
+├── output/           # Default directory where reconstruction results are saved
+├── params/
+│   ├── examples/     # Ready-to-run parameter files for included demo datasets (e.g., tBL_WSe2, PSO)
+│   ├── templates/    # Templates ranging from minimal setups to full API reference
+│   └── walkthrough/  # Tutorial-driven parameter files designed to guide you through specific features (e.g., multislice, advanced constraints, and hyperparameter tuning)
+└── scripts/          # Utility scripts for fetching demo data and submitting batch jobs on computing clusters
+```
+
 ### 2. Download the Demo Data
 We provide a helper script to automatically fetch the example datasets, and place it in the correct `ptyrad/data/` folder:
 ```bash
 # Download and extract zip files (tBL-WSe2 and PSO, 1.3 GB), should be done in 1-2 mins.
 python ./scripts/download_demo_data.py
+```
+
+After downloading and unzipping, the folder structure should look like this:
+```text
+# Folder structure
+
+ptyrad/
+├── data/ 
+│   ├── PSO/
+│   └── tBL_WSe2/
+├── notebooks/
+├── output/   
+├── params/
+└── scripts/  
 ```
 
 ### 3. Run the Demo Reconstructions
@@ -121,7 +149,7 @@ Please check the following before running the demo:
 Now you're ready to run a quick demo using one of two interfaces: 
 - **Interactive Jupyter interface (Recommended)**
   
-    Run the `ptyrad/tutorials/run_ptyrad.ipynb` in VS code, or run the following command in terminal:
+    Run the `ptyrad/notebooks/run_ptyrad.ipynb` in VS code, or run the following command in terminal:
 
     ```bash
     jupyter notebook ./tutorials/run_ptyrad.ipynb # Or direcly open it in VS code

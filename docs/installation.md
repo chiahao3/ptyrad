@@ -2,13 +2,15 @@
 
 # Installation
 
-*PtyRAD* package is available on both `PyPI` and `conda-forge`, while the source codes are hosted on `GitHub` with additional demo params files and demo scripts.
+*PtyRAD* package is available on both `PyPI` and `conda-forge`.
 
 ## Platform and hardware compatibility
 
 *PtyRAD* uses PyTorch as the computation backend, which supports a wide range of machines as shown below.
 
-Assuming you have created and activated a fresh Python environment for *PtyRAD*, click on the corresponding {fas}`check text-success` to jump to your options:
+Assuming you have created and activated a fresh Python environment for *PtyRAD*, 
+
+**click on the corresponding {fas}`check text-success` to jump to your options:**
 
 |                  | {fab}`windows` Windows                        | {fab}`apple` macOS                           | {fab}`linux` Linux                           |
 |:----------------:|:---------------------------------------------:|:--------------------------------------------:|:--------------------------------------------:|

@@ -4,7 +4,7 @@
 :gutter: 2
 
 :::{grid-item-card} 
-:link: reference:installation
+:link: reference:quickstart
 :link-type: ref
 :text-align: center
 
@@ -53,18 +53,24 @@ Full API documentation for advanced users who want to know the internals of *Pty
 ```{toctree}
 :hidden:
 :caption: Get Started
-installation
 quickstart
+installation
 ```
 
 ```{toctree}
 :hidden:
 :caption: User Guide
-params/index
 launch/index
 workflow/index
+```
+
+```{toctree}
+:hidden:
+:caption: Params files
+params_overview
 examples/index
 walkthrough/index
+templates/index
 ```
 
 ```{toctree}

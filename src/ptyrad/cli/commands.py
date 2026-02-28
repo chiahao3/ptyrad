@@ -32,6 +32,13 @@ def get_examples(args):
     """
     from .templates import export_examples
     export_examples(dest_dir=args.dest, force=args.force)
+    
+def get_walkthrough(args):
+    """
+    Copy walkthrough params files
+    """
+    from .templates import export_walkthrough
+    export_walkthrough(dest_dir=args.dest, force=args.force)
 
 def run(args):
     """

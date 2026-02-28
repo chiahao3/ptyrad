@@ -11,6 +11,7 @@ from .commands import (
     get_examples,
     get_params,
     get_templates,
+    get_walkthrough,
     gui,
     init_project,
     print_info,
@@ -38,7 +39,7 @@ def main():
     parser_init.set_defaults(func=init_project)
 
     # get-params
-    parser_params = subparsers.add_parser("get-params", help="Copy all parameter files (templates + examples)")
+    parser_params = subparsers.add_parser("get-params", help="Copy all parameter files (templates + examples + walkthrough)")
     parser_params.add_argument("dest", nargs="?", default=".", help="Destination directory")
     parser_params.add_argument("--force", "-f", action="store_true", help="Overwrite existing folder")
     parser_params.set_defaults(func=get_params)
@@ -54,6 +55,12 @@ def main():
     parser_ex.add_argument("dest", nargs="?", default=".", help="Destination directory")
     parser_ex.add_argument("--force", "-f", action="store_true", help="Overwrite existing folder")
     parser_ex.set_defaults(func=get_examples)
+    
+    # get-walkthrough
+    parser_walk = subparsers.add_parser("get-walkthrough", help="Copy walkthrough params files")
+    parser_walk.add_argument("dest", nargs="?", default=".", help="Destination directory")
+    parser_walk.add_argument("--force", "-f", action="store_true", help="Overwrite existing folder")
+    parser_walk.set_defaults(func=get_walkthrough)
 
     # run
     parser_run = subparsers.add_parser("run", help="Run PtyRAD reconstruction")
