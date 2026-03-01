@@ -35,7 +35,7 @@ dependencies = [
 ]
 
 [project.scripts]
-ptyrad = "ptyrad.cli.main:main"
+ptyrad = "ptyrad.cli.entry:main"
 
 [project.urls]
 "Homepage" = "https://github.com/chiahao3/ptyrad"
@@ -45,7 +45,10 @@ ptyrad = "ptyrad.cli.main:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
-include-package-data = true
+include-package-data = false
+
+[tool.setuptools.package-data]
+"ptyrad.starter" = ["**/*"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

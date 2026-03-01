@@ -1,0 +1,59 @@
+{% set name = "ptyrad" %}
+{% set version = "0.1.0b13.post1" %}
+{% set python_min = "3.10" %}
+
+package:
+  name: {{ name|lower }}
+  version: {{ version }}
+
+source:
+  path: .. # Point to local package instead of PyPI link for testing
+
+build:
+  entry_points:
+    - ptyrad = ptyrad.cli.entry:main
+  noarch: python
+  script: {{ PYTHON }} -m pip install . -vv --no-deps --no-build-isolation
+  number: 0
+
+requirements:
+  host:
+    - python {{ python_min }}
+    - setuptools >=61.0
+    - pip
+  run:
+    - python >={{ python_min }}
+    - accelerate
+    - h5py
+    - jupyter
+    - matplotlib-base
+    - optuna
+    - pydantic
+    - pytorch >=2.0
+    - scikit-learn
+    - scipy
+    - tifffile
+    - torchvision
+
+
+test:
+  imports:
+    - ptyrad
+  commands:
+    - pip check
+    - ptyrad --help
+    - python -m ptyrad --help
+  requires:
+    - python {{ python_min }}
+    - pip
+
+about:
+  home: https://github.com/chiahao3/ptyrad
+  summary: 'PtyRAD: Ptychographic Reconstruction with Automatic Differentiation'
+  dev_url: "https://github.com/chiahao3/ptyrad"
+  license: LGPL-3.0-or-later
+  license_file: LICENSE
+
+extra:
+  recipe-maintainers:
+    - chiahao3
