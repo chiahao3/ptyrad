@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.0b13] - 2026-03-01
+### Added
+- Add `src/ptyrad/starter/` folder to enable `ptyrad init` for fast working directory setup including example, walkthrough, and templates params files with package installation
+- Add provenance saving and `get_reconstruction_provenance.ipynb` to `notebooks/`. The provenance record (automatically saved in .hdf5 attr) makes it easier to inspect and reproduce results from sequential reconstructions.
+- Add `get_affine_from_image.ipynb` to `notebooks/` to help users estimate scan affine transformation from image distortions with the help from Dr. Guanxing Li.
+- Add `probe_normalization` to `init_params` for more flexible initialization. `mode='max_total_ints'` can be use to model datasets with large amount of missing electrons by normalizing the probe with the strongest pattern intensity.
+- Update `recon_dir_affixes` to output aberrations by providing a new key `aberrations`, remove old key `illumination`, and add another new key `conv_angle`.
+- Enable hypertuning Krivanek probe aberrations up to 5th order as suggested by @noahschnitzer.
+- Add `Aberrations` class to support flexible aberration conversion between Haider, Krivanek (polar, cartesian) notations; Refactor `make_stem_probe` so it's no longer using Zemlin notation for aberrations. This addition is motivated by useful discussion with @noahschnitzer. 
+- Add `preload_data` option to `model_params` to enable RAM->GPU data streaming so we can reconstruct large datasets that don't fit into GPU VRAM as discussed in issue #28. Set to False to enable data streaming, default is True for efficiency although the performance difference is negligible on demo datasets.
+- Add `kr_thresh` constraint to promote L0-like sparsity and denoise the object by thresholding the DCT coefficients and keeping only top X percent similar to JPEG compression
+### Changed
+- Major refinment of JIT torch.compile implementation and forward multislice function. **2x performance improvement** on demo PSO dataset.
+- Refine the logger implementation and completely removes the rudimentary `vprint`. Remove batch timing during reconstruction for simplicity and performance.
+- Major internal refactoring with more subpackages (`core/`, `runtime/`, `solver/`, `io/`, etc.) and import management to isolate torch as much as possible (so CLI tools and utils can run without importing torch)
+- Use `probe_aberrations` as the new entry for aberration specification, legacy entries like `probe_defocus` and `probe_c3` are deprecated but still supported with automatic params sanitization
+- Correct the unintended x-y transpose of exported image `probe_amp_iterXXX.tif`. This does not affect the reconstruction, saved model, or any other figure
+- Use adaptive kernel size for detector Gaussian blur (`detector_blur_std`) with `max(5, 6sigma+1)` as discussed in issue #35. This would make cases with std>1 much more accurate with negligible impact on performance.
+- Enable `sparse` and `compact` grouping in multiGPU mode with the "split batch" approach. Previously multiGPU can only do `random` grouping.
+- Speed improvement of generating sparse grouping in `make_batches` with hilbert and fps samplers. For 256x256 scan pattern, 'hilbert' gives good quality groups in 0.5 sec, while 'fps' produces best quality groups in 110 sec. 'fps' is similar to the original implementation but is ~13x faster. This is motivated by discussion in PR #33.
+### Removed
+- Remove `obj_preblur_std` as it's not quite physically justifiable
+- Remove `verbose` CLI argument and `if_quiet` from `recon_params`, verbosity is now controlled by `--verbosity` using standard logger levels (e.g., `DEBUG`, `INFO`, `WARNING`, `ERROR`)
+- Remove redundant probe simulation approach with `probe_params: <SIMULATION_DICT>` as it's very restrictive and error-prone so `probe_params` does not accept `Dict` anymore.
+
 ## [0.1.0b12] - 2025-09-30
 ### Added
 - Add `pos_recenter` constraint to remove potential global offset from cropping positions. This will help keeping probe, position, and object relatively in place.
