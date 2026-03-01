@@ -6,9 +6,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent))
 
 import sync_notebooks
-import sync_walkthrough
-import sync_examples
-import sync_templates
+import sync_params
 
 def sync_all():
     print("🔄 Starting full synchronization...")
@@ -16,14 +14,8 @@ def sync_all():
     print("\n[1] Syncing Notebooks...")
     sync_notebooks.main()
     
-    print("\n[2] Syncing Walkthroughs...")
-    sync_walkthrough.main()
-    
-    print("\n[3] Syncing Examples...")
-    sync_examples.main()
-    
-    print("\n[4] Syncing Templates...")
-    sync_templates.main()
+    print("\n[2] Syncing Params (Examples, Walkthrough, Templates)...")
+    sync_params.main()
     
     print("\n✨ All systems go!")
 
