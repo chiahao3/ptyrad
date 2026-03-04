@@ -151,6 +151,7 @@ def validate_params(args):
     
     try:
         _ = load_params(args.params_path, validate=True)
+        print(f"Success! Params file: '{args.params_path}' is validated!")
     except Exception as e:
         print(f"Invalid parameters: {e}")
 
