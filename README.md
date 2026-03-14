@@ -5,6 +5,7 @@
 [![Anaconda-Server Badge](https://anaconda.org/conda-forge/ptyrad/badges/latest_release_date.svg)](https://anaconda.org/conda-forge/ptyrad)
 [![Paper](https://img.shields.io/badge/Paper-10.1093/mam/ozaf070-blue)](https://academic.oup.com/mam/article/doi/10.1093/mam/ozaf070/8222545?utm_source=authortollfreelink&utm_campaign=mam&utm_medium=email&guestAccessKey=e9e13516-273a-4e46-bec4-7488e9001d7d)
 [![Zenodo](https://zenodo.org/badge/DOI/10.5281/zenodo.15392805.svg)](https://doi.org/10.5281/zenodo.15392805)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/chiahao3/ptyrad)
 
 [**Docs**](https://ptyrad.readthedocs.io/en/latest/index.html)
 | [**Install Guide**](https://ptyrad.readthedocs.io/en/latest/installation.html)
