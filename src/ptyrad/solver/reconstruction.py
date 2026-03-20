@@ -574,7 +574,7 @@ def time_sync(device=None):
         torch.cuda.synchronize(device)
     # Check if MPS (Metal Performance Shaders) is available (macOS only)
     elif torch.backends.mps.is_available():
-        torch.mps.synchronize(device)
+        torch.mps.synchronize() # As of pytorch 2.10, torch.mps.synchronize doesn't take any arg
     
     # Measure the time
     t = perf_counter()
