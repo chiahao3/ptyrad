@@ -575,6 +575,8 @@ def time_sync(device=None):
     # Check if MPS (Metal Performance Shaders) is available (macOS only)
     elif torch.backends.mps.is_available():
         torch.mps.synchronize() # As of pytorch 2.10, torch.mps.synchronize doesn't take any arg
+    # TODO: Refactor with torch.accelerator.synchronize() once min pytorch is bumped to >=2.7
+    #       torch.accelerator provides a unified API across CUDA, MPS, and future accelerators.
     
     # Measure the time
     t = perf_counter()

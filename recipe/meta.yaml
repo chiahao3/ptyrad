@@ -29,7 +29,7 @@ requirements:
     - matplotlib-base
     - optuna
     - pydantic
-    - pytorch >=2.0
+    - pytorch >=2.4
     - scikit-learn
     - scipy
     - tifffile

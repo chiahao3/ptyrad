@@ -30,7 +30,7 @@ dependencies = [
   "scikit-learn",
   "scipy",
   "tifffile",
-  "torch>=2.0",
+  "torch>=2.4",
   "torchvision"
 ]
 
