@@ -3,8 +3,10 @@ PtyRAD-specific saving functions
 
 """
 
+import json
 import logging
 import os
+from pathlib import Path
 from typing import Any, Dict
 
 import h5py
@@ -17,6 +19,43 @@ from ptyrad.utils.image_proc import normalize_by_bit_depth
 from ptyrad.utils.time import get_time
 
 logger = logging.getLogger(__name__)
+
+# --- HDF5 attribute vs dataset classification ---
+# Top-level keys to store as HDF5 root attributes (scalars/short strings)
+ROOT_ATTR_KEYS = {'ptyrad_version', 'output_path', 'random_seed', 'avg_iter_t', 'niter'}
+
+# model_attributes sub-keys to store as attrs on the model_attributes group
+# (scalars, small arrays, and small dicts that fit well under 64 KB)
+MODEL_ATTR_KEYS = {
+    'dx', 'dk', 'N_scan_slow', 'N_scan_fast', 'detector_blur_std',
+    'probe_int_sum', 'tilt_obj', 'shift_probes', 'slice_thickness',
+    'scan_affine', 'start_iter', 'lr_params', 'omode_occu',
+}
+
+# model_attributes sub-keys that must remain as datasets (potentially large)
+MODEL_DATASET_KEYS = {'H', 'crop_pos'}
+
+
+class _ParamsJSONEncoder(json.JSONEncoder):
+    """Lossless JSON encoder for the params dict.
+
+    Handles numpy scalar types that may slip in (e.g., from .shape indexing).
+    The params dict is YAML-origin data validated through Pydantic, so it
+    should only contain basic Python types, but this encoder provides a
+    defensive fallback.
+    """
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        elif isinstance(obj, np.floating):
+            return float(obj)
+        elif isinstance(obj, np.bool_):
+            return bool(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        elif isinstance(obj, Path):
+            return str(obj)
+        return super().default(obj)
 
 ###### These are results saving functions ######
 
@@ -210,95 +249,150 @@ def make_save_dict(output_path, model, params, optimizer, niter, indices, batch_
     
     return save_dict
 
+def _prepare_attr_value(value, none_sentinel="__NONE__"):
+    """Convert a Python value to an HDF5-attribute-compatible type.
+
+    HDF5 attributes natively support scalars (int, float, str), numpy arrays,
+    and numpy scalars. Dicts are JSON-serialized. None uses a sentinel string.
+    """
+    if value is None:
+        return none_sentinel
+    elif isinstance(value, dict):
+        return json.dumps(value, cls=_ParamsJSONEncoder)
+    elif isinstance(value, torch.Tensor):
+        arr = value.detach().cpu().numpy()
+        return arr.item() if arr.ndim == 0 else arr
+    elif isinstance(value, np.ndarray):
+        return value.item() if value.ndim == 0 else value
+    elif isinstance(value, np.number):
+        return value.item()
+    elif isinstance(value, (int, float, str, bool)):
+        return value
+    elif isinstance(value, (list, tuple)):
+        return np.array(value)
+    else:
+        return str(value)
+
+
 def save_dict_to_hdf5(
     d: Dict[str, Any], output_path: str, none_sentinel: str = "__NONE__", **kwargs
 ) -> None:
     """Saves a nested Python dictionary to an HDF5 file.
 
-    Recursively parses the dictionary and converts common Python, NumPy, and 
-    PyTorch types into HDF5-compatible formats. Non-compatible types (e.g., 
-    lists of tuples, `None`) are converted to safe string representations or sentinels.
+    Stores small metadata as HDF5 attributes for convenient access, while
+    keeping large arrays and tensors as datasets. The classification is
+    controlled by ``ROOT_ATTR_KEYS``, ``MODEL_ATTR_KEYS``, and
+    ``MODEL_DATASET_KEYS`` module constants. The ``params`` dict is
+    JSON-serialized into a root-level attribute.
+
+    Recursively parses the dictionary and converts common Python, NumPy, and
+    PyTorch types into HDF5-compatible formats. Non-compatible types (e.g.,
+    lists of tuples, ``None``) are converted to safe string representations or sentinels.
     Integer keys (common in optimizer state dicts) are coerced to strings.
 
     Args:
         d (dict): The nested dictionary to serialize.
-        output_path (str): The target file path for the `.hdf5` file.
-        none_sentinel (str, optional): The string used to represent `None` 
-            values in the HDF5 file. Defaults to "__NONE__".
-        **kwargs: Additional keyword arguments passed to `h5py.File.create_dataset()` 
-            (e.g., `compression="gzip"`).
+        output_path (str): The target file path for the ``.hdf5`` file.
+        none_sentinel (str, optional): The string used to represent ``None``
+            values in the HDF5 file. Defaults to ``"__NONE__"``.
+        **kwargs: Additional keyword arguments passed to ``h5py.File.create_dataset()``
+            (e.g., ``compression="gzip"``).
     """
 
     def _recursively_save_dict_to_hdf5(d: Dict[str, Any], h5group: h5py.Group, path="") -> None:
         for key, value in d.items():
             full_key = f"{path}/{key}" if path else str(key)
             key = str(key)  # convert to string for HDF5, especially important for optimizer state dict with integer as key
-            
+
             try:
                 # Delete existing group/dataset if it exists
                 if key in h5group:
                     del h5group[key]
-                
+
                 if value is None:
                     h5group.create_dataset(key, data=none_sentinel, **kwargs)
-                
+
                 elif isinstance(value, dict):
                     subgroup = h5group.create_group(key)
                     _recursively_save_dict_to_hdf5(value, subgroup)
-                
+
                 elif isinstance(value, list):
                     if all(isinstance(i, (int, float, np.number)) for i in value):
                         h5group.create_dataset(key, data=np.array(value), **kwargs)
-                    
+
                     elif all(isinstance(i, str) for i in value):
                         dt = h5py.special_dtype(vlen=str)
                         h5group.create_dataset(key, data=np.array(value, dtype=dt), **kwargs)
-                    
+
                     elif all(isinstance(i, tuple) for i in value):
                         try:
                             arr = np.array([list(t) for t in value])
                             h5group.create_dataset(key, data=arr, **kwargs)
                         except Exception:
                             h5group.create_dataset(key, data=str(value), **kwargs)
-                    
+
                     elif all(isinstance(i, dict) for i in value):
                         subgroup = h5group.create_group(key)
                         for idx, item in enumerate(value):
                             item_group = subgroup.create_group(str(idx))
                             _recursively_save_dict_to_hdf5(item, item_group)
-                    
+
                     elif all(isinstance(i, (np.ndarray, torch.Tensor)) for i in value):
                         try:
                             arr = np.stack([i.detach().cpu().numpy() if isinstance(i, torch.Tensor) else i for i in value])
                             h5group.create_dataset(key, data=arr, **kwargs)
                         except Exception:
                             h5group.create_dataset(key, data=str(value), **kwargs)
-                    
+
                     else:
                         # fallback to storing list as strings (warn if needed)
                         h5group.create_dataset(key, data=str(value), **kwargs)
-                
+
                 elif isinstance(value, tuple):
                     h5group.create_dataset(key, data=np.array(value), **kwargs)
-                
+
                 elif isinstance(value, (int, float, str, np.number)):
                     h5group.create_dataset(key, data=value, **kwargs)
-                
+
                 elif isinstance(value, torch.Tensor):
                     h5group.create_dataset(key, data=value.detach().cpu().numpy(), **kwargs)
-                
+
                 elif isinstance(value, np.ndarray):
                     h5group.create_dataset(key, data=value, **kwargs)
-                
+
                 # Fallback option
                 else:
                     h5group.create_dataset(key, data=str(value), **kwargs)
-            
+
             except Exception as e:
                 raise RuntimeError(f"Failed to save key '{key}' (full path: '{full_key}') of type {type(value)}") from e
-            
+
     with h5py.File(output_path, "w") as hf:
-        _recursively_save_dict_to_hdf5(d, hf)
+        # --- Write root-level attributes ---
+        for key in ROOT_ATTR_KEYS:
+            if key in d:
+                hf.attrs[key] = _prepare_attr_value(d[key], none_sentinel)
+
+        # --- Write params as a JSON string attribute ---
+        if 'params' in d and d['params'] is not None:
+            hf.attrs['params_json'] = json.dumps(d['params'], cls=_ParamsJSONEncoder)
+
+        # --- Write model_attributes: split into attrs vs datasets ---
+        if 'model_attributes' in d and isinstance(d['model_attributes'], dict):
+            ma_group = hf.create_group('model_attributes')
+            for key, value in d['model_attributes'].items():
+                if key in MODEL_ATTR_KEYS:
+                    ma_group.attrs[key] = _prepare_attr_value(value, none_sentinel)
+                else:
+                    # Stays as dataset (H, crop_pos, or any future large entries)
+                    _recursively_save_dict_to_hdf5({key: value}, ma_group, path="model_attributes")
+
+        # --- Write remaining keys as datasets (the original recursive path) ---
+        remaining = {k: v for k, v in d.items()
+                     if k not in ROOT_ATTR_KEYS
+                     and k != 'params'
+                     and k != 'model_attributes'}
+        _recursively_save_dict_to_hdf5(remaining, hf)
 
 def make_output_folder(
     output_dir,

@@ -3,6 +3,7 @@ Hierarchical file handling (load/save) for pt, mat, hdf5 formats
 
 """
 
+import json
 import os
 from typing import Any, List, Optional, Union
 import logging
@@ -176,6 +177,58 @@ def load_hdf5(
 
     """
 
+    def _handle_attr_value(v):
+        """Convert an HDF5 attribute value back to its original Python type."""
+        # Handle bytes → str
+        if isinstance(v, bytes):
+            try:
+                v = v.decode('utf-8')
+            except UnicodeDecodeError:
+                return v
+
+        # Handle sentinel string → None
+        if isinstance(v, str) and v == "__NONE__":
+            return None
+
+        # Try parsing JSON strings (used for dicts like params, start_iter, lr_params)
+        if isinstance(v, str):
+            try:
+                parsed = json.loads(v)
+                if isinstance(parsed, (dict, list)):
+                    return parsed
+            except (json.JSONDecodeError, ValueError):
+                pass
+
+        # Handle numpy scalars → Python scalars
+        if isinstance(v, np.generic):
+            return v.item()
+
+        # Handle 0-d numpy arrays
+        if isinstance(v, np.ndarray) and v.ndim == 0:
+            return v.item()
+
+        return v
+
+    def _load_attrs(hobj):
+        """Load all HDF5 attributes from a group/file into a dict.
+
+        Skips 'provenance_json' which is handled separately by
+        ``ptyrad.io.provenance``.
+        """
+        attrs = {}
+        for k, v in hobj.attrs.items():
+            if k == 'provenance_json':
+                continue
+            # Special handling: 'params_json' attr → 'params' key
+            if k == 'params_json':
+                try:
+                    attrs['params'] = json.loads(v if isinstance(v, str) else v.decode('utf-8'))
+                except (json.JSONDecodeError, ValueError, UnicodeDecodeError):
+                    attrs['params'] = v
+            else:
+                attrs[k] = _handle_attr_value(v)
+        return attrs
+
     def _recursively_load(hobj, key=None, delimiter="."):
         """Recursively load h5py Group or Dataset into dict or array."""
 
@@ -183,19 +236,36 @@ def load_hdf5(
         if key is not None:
             parts = key.split(delimiter)
             for part in parts:
-                if not isinstance(hobj, (h5py.Group, h5py.File)) or part not in hobj:
+                if isinstance(hobj, (h5py.Group, h5py.File)):
+                    # Check datasets/groups first, then attributes
+                    if part in hobj:
+                        hobj = hobj[part]
+                    elif part in hobj.attrs:
+                        return _handle_attr_value(hobj.attrs[part])
+                    elif part == 'params' and 'params_json' in hobj.attrs:
+                        return json.loads(hobj.attrs['params_json'] if isinstance(hobj.attrs['params_json'], str)
+                                          else hobj.attrs['params_json'].decode('utf-8'))
+                    else:
+                        raise KeyError(
+                            f"Key '{key}' not found. Failed at '{part}'. "
+                            f"Available key(s) in this HDF5 file are {list_nested_keys(hf)}. "
+                            "Tip: If you don't know the correct key, try 'key=None' to load the entire file as a dict."
+                        )
+                else:
                     raise KeyError(
                         f"Key '{key}' not found. Failed at '{part}'. "
                         f"Available key(s) in this HDF5 file are {list_nested_keys(hf)}. "
                         "Tip: If you don't know the correct key, try 'key=None' to load the entire file as a dict."
                     )
-                hobj = hobj[part]
 
         # Load the object without user-specified key
         if isinstance(hobj, h5py.Dataset):
             return handle_hdf5_types(hobj[()])
         elif isinstance(hobj, h5py.Group):
-            return {k: _recursively_load(hobj[k]) for k in hobj}
+            result = {k: _recursively_load(hobj[k]) for k in hobj}
+            # Merge attributes into the result dict
+            result.update(_load_attrs(hobj))
+            return result
         else:
             raise TypeError(f"Unsupported HDF5 object type: {type(hobj)}")
 
@@ -208,6 +278,8 @@ def load_hdf5(
     with h5py.File(file_path, "r") as hf:
         if key in (None, "", []):
             file_dict = {k: _recursively_load(hf[k]) for k in hf.keys()}
+            # Merge file-level attributes (root attrs like ptyrad_version, params_json, etc.)
+            file_dict.update(_load_attrs(hf))
             return file_dict
 
         elif isinstance(key, str):
@@ -514,6 +586,16 @@ def list_nested_keys(hobj, delimiter=".", prefix=""):
         else:
             # Add dataset key
             keys.append(full_key)
+
+    # Also include HDF5 attribute keys (not applicable to plain dicts)
+    if isinstance(hobj, (h5py.Group, h5py.File)):
+        for attr_key in hobj.attrs.keys():
+            if attr_key == 'provenance_json':
+                continue
+            display_key = 'params' if attr_key == 'params_json' else attr_key
+            full_key = f"{prefix}{display_key}" if prefix == "" else f"{prefix}{delimiter}{display_key}"
+            keys.append(full_key)
+
     return keys
 
 def print_nested_dict(d, indent=0, leaf_inline_threshold=6):
