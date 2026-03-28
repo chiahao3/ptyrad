@@ -123,20 +123,18 @@ class CombinedConstraint(torch.nn.Module):
                 logger.debug(f"Apply lateral (y,x) Gaussian blur with std = {obj_rblur_std} px on objp at iter {niter}")
     
     def apply_obj_zblur(self, model, niter):
-        ''' Apply Gaussian blur to object, this only applies to the last dimension (...,L) '''
+        ''' Apply Gaussian blur to object along the z-axis (slice dimension) '''
 
         if self._should_apply_at_iter('obj_zblur', niter) and self.constraint_params['obj_zblur']['std'] !=0:
             obj_type       = self.constraint_params['obj_zblur']['obj_type']
             obj_zblur_ks   = self.constraint_params['obj_zblur']['kernel_size']
             obj_zblur_std  = self.constraint_params['obj_zblur']['std']
-            
+
             if obj_type in ['amplitude', 'both']:
-                tensor = model.opt_obja.permute(0,2,3,1)
-                model.opt_obja.copy_(gaussian_blur_1d(tensor, kernel_size=obj_zblur_ks, sigma=obj_zblur_std).permute(0,3,1,2))
+                model.opt_obja.copy_(gaussian_blur_1d(model.opt_obja, kernel_size=obj_zblur_ks, sigma=obj_zblur_std))
                 logger.debug(f"Apply z-direction Gaussian blur with std = {obj_zblur_std} px on obja at iter {niter}")
             if obj_type in ['phase', 'both']:
-                tensor = model.opt_objp.permute(0,2,3,1)
-                model.opt_objp.copy_(gaussian_blur_1d(tensor, kernel_size=obj_zblur_ks, sigma=obj_zblur_std).permute(0,3,1,2)) 
+                model.opt_objp.copy_(gaussian_blur_1d(model.opt_objp, kernel_size=obj_zblur_ks, sigma=obj_zblur_std))
                 logger.debug(f"Apply z-direction Gaussian blur with std = {obj_zblur_std} px on objp at iter {niter}")
     
     def apply_kr_filter(self, model, niter):

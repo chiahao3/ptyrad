@@ -228,38 +228,51 @@ def get_gaussian1d(size, std, norm=False):
     return k
 
 def gaussian_blur_1d(tensor, kernel_size=5, sigma=0.5):
-    """Applies a 1D Gaussian blur to a PyTorch tensor along its last dimension.
+    """Applies a 1D Gaussian blur to a PyTorch tensor along its second dimension (dim 1).
 
-    This uses a 1D convolution with 'replicate' padding to minimize edge artifacts 
-    (compared to standard zero-padding), which is beneficial for processing 
-    object amplitudes.
+    Designed for 4D object tensors of shape [omode, z, H, W]. The blur is applied
+    along the z-axis (dim 1), treating each spatial position (H, W) and object mode
+    independently. Replicate padding is used along z to properly handle boundaries 
+    for both object amplitude and phase, avoiding the edge artifacts caused by 
+    standard zero-padding.
+
+    Uses F.conv2d with a (kernel_size, 1) kernel on a reshaped [omode, 1, z, H*W]
+    view so that z stays in its natural position without any permutation.
+    conv2d is used instead of conv3d because conv3d silently produces incorrect
+    results on the MPS backend.
 
     Args:
-        tensor (torch.Tensor): The input tensor to blur. The convolution is applied 
-            along the last dimension.
-        kernel_size (int, optional): The number of elements in the Gaussian kernel. 
-            Defaults to 5.
-        sigma (float, optional): The standard deviation of the Gaussian kernel. 
+        tensor (torch.Tensor): Input tensor of shape [omode, z, H, W].
+        kernel_size (int, optional): Length of the 1D Gaussian kernel. Defaults to 5.
+        sigma (float, optional): Standard deviation of the Gaussian kernel in pixels.
             Defaults to 0.5.
 
     Returns:
-        torch.Tensor: The blurred tensor, maintaining the same shape, dtype, 
-        and device as the input.
-        
+        torch.Tensor: Blurred tensor with the same shape, dtype, and device as input.
     """
-
-    # F.con1d does not have 'padding_mode', so it's default to be 0 padding, which is not ideal for obja
-    # tensor_blur = F.conv1d(input=tensor.reshape(-1, 1, tensor.size(-1)), weight=k1d, padding='same').view(*tensor.shape)
+    import torch.nn.functional as F
 
     dtype  = tensor.dtype
-    device = tensor.device 
-    k = torch.from_numpy(get_gaussian1d(kernel_size, sigma, norm=True)).type(dtype).to(device)
-    k1d = k.view(1, 1, -1)
-    
-    gaussian1d = torch.nn.Conv1d(1,1,kernel_size,padding='same', bias=False, padding_mode='replicate')
-    gaussian1d.weight = torch.nn.Parameter(k1d)
-    tensor_blur = gaussian1d(tensor.reshape(-1, 1, tensor.size(-1))).view(*tensor.shape)
-    return tensor_blur
+    device = tensor.device
+    k = torch.from_numpy(get_gaussian1d(kernel_size, sigma, norm=True)).to(dtype=dtype, device=device)
+
+    # Conv2d weight: [out_channels=1, in_channels=1, kZ, 1]
+    weight = k.view(1, 1, kernel_size, 1)
+
+    # Reshape [omode, z, H, W] → [omode, 1, z, H*W] (flatten spatial dims, add channel)
+    omode, z, H, W = tensor.shape
+    t = tensor.reshape(omode, z, H * W).unsqueeze(1)  # [omode, 1, z, H*W]
+
+    # Replicate-pad along z (dim 2 of the 4D view) to match padding='same' semantics.
+    # Asymmetric for even kernel_size: extra pad goes to the back.
+    pad_total = kernel_size - 1
+    pad_front = pad_total // 2
+    pad_back  = pad_total - pad_front
+
+    # F.pad pads from the last dim inward: (W_l, W_r, H_t, H_b)
+    t_padded = F.pad(t, (0, 0, pad_front, pad_back), mode='replicate')
+
+    return F.conv2d(t_padded, weight).squeeze(1).reshape(omode, z, H, W)
 
 # This is currently used in core/constraints.py > kr_filter, probe_mask_k
 def make_sigmoid_mask(Npix: int, relative_radius: float = 2/3, relative_width: float = 0.2, center: Optional[Tuple[float, float]] = None):
