@@ -357,43 +357,108 @@ def sort_by_mode_int(modes):
     modes = modes[indices]
     return modes
 
-def orthogonalize_modes_vec(modes, sort = False):
-    ''' orthogonalize the modes using SVD'''
-    # Input:
-    #   modes: input function with multiple modes
-    # Output:
-    #   ortho_modes: 
-    # Note:
-    #   This function is a highly vectorized PyTorch implementation of `ptycho\+core\probe_modes_ortho.m` from PtychoShelves
-    #   It's numerically equivalent with the following for-loop version but is ~ 10x faster on small complex64 tensors (10,164,164) 
-    #   Most indexings arr converted from Matlab (start from 1) to Python (start from 0)
-    #   The expected shape of `modes` input is modified into (pmode, Ny, Nx) to be consistent with ptyrad
-    #   If you check the orthoganality of each mode, make sure to change the input into complex128 or to modify the default tolerance of torch.allclose.
-    #   Note that Matlab's dot(p2,p1) for complex input would implictly apply with the complex conjugate, 
-    #   so Matlab's dot() != torch.dot because torch.dot doesn't automatically apply the complex conjugate.
-    #   This is pointed out by @dong-zehao in issue #11.
-        
+def orthogonalize_modes_vec(modes, sort=False):
+    ''' Orthogonalize probe modes via Gram matrix eigendecomposition.
+
+    Uses eigh (Hermitian eigensolver) for cross-platform numerical stability.
+    eigh dispatches to cheev/dsyev on all LAPACK backends (Accelerate on macOS,
+    MKL on Windows/Linux), unlike eig which used the numerically weaker cgeev.
+    A is upcasted to complex128 for the small (Nmode x Nmode) decomposition to
+    further guard against float32 precision loss on any backend.
+    Falls back silently to the original modes if the result is invalid.
+
+    Note: 
+    
+    - MPS does not support complex128 or eigh; the entire double-precision
+    computation is moved to CPU, which routes through the stable Hermitian
+    LAPACK path on macOS. Results are cast back to the original device/dtype
+    only after validation.
+    
+    - The use of eigh and A = 0.5 * (A + A.conj().T) are suggested in PR #34 by 
+    @SoverHHH, @EdwardPooh, and @dong-zehao
+
+    - This is a highly vectorized PyTorch implementation of ``ptycho\\+core\\probe_modes_ortho.m``
+    from PtychoShelves. The expected shape of `modes` input is (pmode, Ny, Nx) to be consistent with ptyrad.
+    
+    - Matlab's dot(p2,p1) for complex input would implictly apply with the complex conjugate,
+    so Matlab's dot() != torch.dot because torch.dot doesn't automatically apply the complex conjugate.
+    This is pointed out by @dong-zehao in issue #11.
+    '''
+    
     orig_modes_dtype = modes.dtype
-    if orig_modes_dtype != torch.complex64:
+    orig_device = modes.device
+
+    if not modes.is_complex():
         modes = torch.complex(modes, torch.zeros_like(modes))
+
     input_shape = modes.shape
-    modes_reshaped = modes.reshape(input_shape[0], -1) # Reshape modes to have a shape of (Nmode, X*Y)
-    A = torch.matmul(modes_reshaped, modes_reshaped.H) # A = M @ M^T.conj() = M @ M^H, H is the conjugate transpose
+    modes_reshaped = modes.reshape(input_shape[0], -1)
 
-    if A.device.type == 'mps': # Temporary hack because PyTorch MPS backend doesn't seem to implement linalg.eig yet.
-        _, evecs = torch.linalg.eig(A.to('cpu'))
-        evecs = evecs.to('mps')
-    else:
-        _, evecs = torch.linalg.eig(A)
-   
-    # Matrix-multiplication version (N,N) @ (N,YX) = (N,YX)
-    ortho_modes = torch.matmul(evecs.H, modes_reshaped).reshape(input_shape)
+    # Determine compute backend: MPS does not support complex128 or eigh,
+    # so all double-precision math is routed through CPU on Apple Silicon.
+    compute_device = torch.device('cpu') if orig_device.type == 'mps' else orig_device
+    compute_dtype = torch.complex128
 
-    # sort modes by their contribution
+    # 1. Move to compute backend, then upcast to double precision
+    modes_double = modes_reshaped.to(device=compute_device).to(dtype=compute_dtype)
+
+    # 2. Compute Gram matrix A = M @ M^H (Nmode x Nmode)
+    A = torch.matmul(modes_double, modes_double.H)
+
+    # 3. Enforce exact Hermitian symmetry
+    A = 0.5 * (A + A.H)
+
+    # 4. Calculates eigen vectors with eigh
+    _, evecs_double = torch.linalg.eigh(A)
+
+    # 5. Project to get orthogonal modes (still at double precision on compute_device)
+    ortho_modes_double = torch.matmul(evecs_double.H, modes_double)
+
+    # 6. Validate at double precision BEFORE casting back
+    if not _validate_ortho_update(modes_double, ortho_modes_double):
+        return modes # Return the original modes unmodified
+
+    # 7. Cast back to original dtype, device, and then reshape
+    ortho_modes = ortho_modes_double.to(dtype=orig_modes_dtype).to(device=orig_device).reshape(input_shape)
+
+    # 8. Optional sort
     if sort:
         ortho_modes = sort_by_mode_int(ortho_modes)
-        
-    return ortho_modes.to(orig_modes_dtype)
+
+    return ortho_modes
+
+def _validate_ortho_update(orig_modes_flat, new_modes_flat, ortho_tol=1e-3, norm_rtol=1e-3):
+    """
+    Defensive check to ensure orthogonalization didn't destroy the modes due to 
+    numerical instability (e.g., precision loss on highly correlated inputs).
+    """
+
+    # Test A: Orthogonality Leakage
+    O_gram = torch.matmul(new_modes_flat, new_modes_flat.H)
+    N = O_gram.shape[0]
+
+    if N <= 1:
+        return True  # single mode is trivially orthogonal
+
+    off_diag_mask = ~torch.eye(N, dtype=torch.bool, device=O_gram.device)
+    max_off_diag = torch.abs(O_gram[off_diag_mask]).max()
+    max_diag = torch.abs(torch.diag(O_gram)).max()
+    
+    # If relative error exceeds the tolerance, reject the update
+    if max_diag > 0 and (max_off_diag / max_diag) > ortho_tol: 
+        rel_err = (max_off_diag / max_diag).item()
+        logger.warning(f"WARNING: Orthogonality warning, high mode leakage detected (rel error: {rel_err:.2e}). Skipping orthogonalization for this iteration.")
+        return False
+
+    # Test B: Norm Preservation 
+    orig_intensity = torch.sum(orig_modes_flat.abs().square())
+    new_intensity = torch.sum(new_modes_flat.abs().square())
+    
+    if not torch.allclose(orig_intensity, new_intensity, rtol=norm_rtol):
+        logger.warning(f"WARNING: Norm-preserving warning, relative total intensity changed more than {norm_rtol} from orthogonalization. Skipping orthogonalization for this iteration.")
+        return False
+
+    return True
 
 def dct_threshold_filter(
     x: torch.Tensor,

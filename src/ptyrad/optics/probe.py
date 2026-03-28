@@ -497,42 +497,100 @@ def sort_by_mode_int_np(modes):
     return modes
 
 def orthogonalize_modes_vec_np(modes, sort=False):
-    """
-    Orthogonalize the modes using SVD-like procedure via eigen decomposition.
+    """Orthogonalize probe modes via Gram matrix eigendecomposition (NumPy version).
+
+    Mirrors the logic of ``orthogonalize_modes_vec`` (PyTorch) but operates on
+    NumPy arrays, making it suitable for probe initialization where PyTorch is
+    not yet involved.
+
+    Uses ``np.linalg.eigh`` (Hermitian eigensolver) for numerical stability.
+    ``eigh`` dispatches to ``dsyev``/``cheev`` on all LAPACK backends (Accelerate
+    on macOS, MKL on Windows/Linux), unlike ``eig`` which used the numerically
+    weaker ``cgeev``.  The Gram matrix is computed and decomposed in complex128
+    to guard against float32/64 precision loss.
+
+    Falls back silently to the original modes if the result is invalid (poor
+    orthogonality or norm change), matching the behaviour of the Torch version.
 
     Parameters
     ----------
     modes : np.ndarray
         Input modes of shape (Nmode, Ny, Nx), complex.
     sort : bool, optional
-        Whether to sort modes by their intensity (norm), by default False.
+        Whether to sort modes by their intensity (descending), by default False.
 
     Returns
     -------
     np.ndarray
-        Orthogonalized modes of the same shape as input.
+        Orthogonalized modes of the same shape and dtype as input, or the
+        original modes unchanged if the validity check fails.
     """
-
     orig_dtype = modes.dtype
-    modes = modes.astype(np.complex128) # temporarily cast to complex128 for more precise orthogonalization
-
     input_shape = modes.shape
     n_modes = input_shape[0]
 
-    # Reshape into (Nmode, Ny*Nx)
+    # 1. Reshape into (Nmode, Ny*Nx) and upcast to complex128 for numerical stability
     modes_reshaped = modes.reshape(n_modes, -1)
+    modes_double = modes_reshaped.astype(np.complex128)
 
-    # Gram matrix A = M @ M^H (Nmode x Nmode)
-    A = modes_reshaped @ modes_reshaped.conj().T
+    # 2. Compute Gram matrix A = M @ M^H (Nmode x Nmode)
+    A = modes_double @ modes_double.conj().T
 
-    # Eigen-decomposition
-    eigvals, eigvecs = np.linalg.eig(A)
+    # 3. Enforce exact Hermitian symmetry
+    A = 0.5 * (A + A.conj().T)
 
-    # Project original modes into orthogonalized space
-    ortho_modes = eigvecs.conj().T @ modes_reshaped
-    ortho_modes = ortho_modes.reshape(input_shape)
+    # 4. Calculates eigen vectors with eigh
+    _, eigvecs = np.linalg.eigh(A)
 
+    # 5. Project to get orthogonal modes (still at double precision)
+    ortho_modes_double = eigvecs.conj().T @ modes_double
+
+    # 6. Validity check: orthogonality and norm preservation
+    if not _validate_ortho_update_np(modes_double, ortho_modes_double):
+        return modes # return the original modes unmodified
+
+    # 7. Cast back to original dtype and reshape
+    ortho_modes = ortho_modes_double.astype(orig_dtype).reshape(input_shape)
+
+    # 8. Optional sort
     if sort:
         ortho_modes = sort_by_mode_int_np(ortho_modes)
+
+    return ortho_modes
+
+def _validate_ortho_update_np(orig_modes_flat, new_modes_flat, ortho_tol=1e-3, norm_rtol=1e-3):
+    """Defensive check that orthogonalization preserved orthogonality and total norm.
+
+    Mirrors ``_validate_ortho_update`` (PyTorch) for NumPy arrays.
+    Both inputs are expected to be 2D (Nmode, Y*X) complex128 arrays.
+
+    Returns True if the update is valid, False if it should be rejected.
+    """
+
+    # Test A: Orthogonality leakage
+    O_gram = new_modes_flat @ new_modes_flat.conj().T
+    N = O_gram.shape[0]
+
+    if N <= 1:
+        return True  # single mode is trivially orthogonal
+
+    off_diag_mask = ~np.eye(N, dtype=bool)
+    max_off_diag = np.abs(O_gram[off_diag_mask]).max()
+    max_diag = np.abs(np.diag(O_gram)).max()
     
-    return ortho_modes.astype(orig_dtype)
+    # If relative error exceeds the tolerance, reject the update
+    if max_diag > 0 and (max_off_diag / max_diag) > ortho_tol:
+        rel_err = max_off_diag / max_diag
+        logger.warning(f"WARNING: Orthogonality warning, high mode leakage detected (rel error: {rel_err:.2e}). Skipping orthogonalization for this iteration.")
+        return False
+
+    # Test B: Norm preservation
+    orig_intensity = np.sum(np.abs(orig_modes_flat) ** 2)
+    new_intensity  = np.sum(np.abs(new_modes_flat) ** 2)
+
+    if orig_intensity > 0 and abs(new_intensity - orig_intensity) / orig_intensity > norm_rtol:
+        logger.warning(f"WARNING: Norm-preserving warning, relative total intensity changed more than {norm_rtol} from orthogonalization. Skipping orthogonalization for this iteration.")
+        return False
+
+    return True
+

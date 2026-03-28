@@ -106,7 +106,7 @@ def get_size_bytes(x):
         print(f"The size of the tensor is {size_gib:.2f} GiB")
     return size_bytes
 
-def check_modes_ortho(tensor, atol = 2e-4):
+def check_modes_ortho(tensor, rtol=1e-3):
     ''' Check if the modes in tensor (Nmodes, []) is orthogonal to each other'''
     # The easiest way to check orthogonality is to calculate the dot product of their 1D vector views
     # Orthogonal vectors would have dot product equals to 0 (Note that `orthonormal` also requires they have unit length)
@@ -116,23 +116,42 @@ def check_modes_ortho(tensor, atol = 2e-4):
     # This is pointed out by @dong-zehao in issue #11.
     # Therefore, instead of torch.dot(a,a), which would output un-intended result when a is complex,
     # use torch.dot(a, a.conj()) for the correct inner product.
-    
     import torch
-    
+    import numpy as np
+
     # Automatically convert numpy array to torch tensor
     if isinstance(tensor, np.ndarray):
         print("Casting input tensor from 'np.ndarray' to 'torch.tensor'")
         tensor = torch.tensor(tensor)
+
     tensor = tensor.to(dtype=torch.complex128)
-    
+
     print(f"Input tensor has shape {tensor.shape} and dtype {tensor.dtype}")
+
+    # Initialize the master flag
+    is_orthogonal = True 
+
     for i in range(tensor.shape[0]):
+        ai = tensor[i].view(-1)
+        norm_i = torch.linalg.norm(ai)
+
         for j in range(i + 1, tensor.shape[0]):
-            dot_product = torch.dot(tensor[i].view(-1), tensor[j].view(-1).conj()) # Note that torch.dot only takes 1D tensor
-            if torch.allclose(dot_product, torch.tensor(0., dtype=dot_product.dtype, device=dot_product.device), atol=atol):
-                print(f"Modes {i} and {j} are orthogonal with abs(dot) = {dot_product.abs().detach().cpu().numpy()}")
+            aj = tensor[j].view(-1)
+            norm_j = torch.linalg.norm(aj)
+
+            dot = torch.dot(ai, aj.conj()) # Note that torch.dot only takes 1D tensor
+
+            # Relative overlap (dimensionless!)
+            rel_overlap = dot.abs() / (norm_i * norm_j + 1e-16)
+
+            if rel_overlap < rtol:
+                print(f"Modes {i}, {j} orthogonal: rel_overlap = {rel_overlap.item():.3e}")
             else:
-                print(f"Modes {i} and {j} are not orthogonal with abs(dot) = {dot_product.abs().detach().cpu().numpy()}")
+                print(f"Modes {i}, {j} NOT orthogonal: rel_overlap = {rel_overlap.item():.3e}")
+                # Flip the flag if any pair fails the tolerance check
+                is_orthogonal = False 
+
+    return is_orthogonal
 
 # Testing functions
 def test_loss_fn(model, indices, loss_fn):
