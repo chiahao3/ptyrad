@@ -5,7 +5,7 @@
 Here, we provide a quick walkthough of how to get started with *PtyRAD*.
 
 ## Recommended Tools
-We recommend using [*Miniforge*](https://github.com/conda-forge/miniforge) for Python environment management, and  
+We recommend using [*Miniforge*](https://conda-forge.org/download/) for Python environment management, and  
 [*Visual Studio Code*](https://code.visualstudio.com/Download) for code editing and execution.
 
 ## Step-by-step guide

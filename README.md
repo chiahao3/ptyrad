@@ -30,13 +30,13 @@
 - JIT compilation with `torch.compile`
 
 ## Recommended Tools
-We recommend using [*Miniforge*](https://github.com/conda-forge/miniforge) for Python environment management, and  
+We recommend using [*Miniforge*](https://conda-forge.org/download/) for Python environment management, and  
 [*Visual Studio Code*](https://code.visualstudio.com/Download) for code editing and execution.
 
 ## Major dependencies
 
-* Python 3.10 or above
-* PyTorch 2.0 or above
+* Recomend Python 3.12 or above
+* PyTorch 2.4 or above
 * While *PtyRAD* can run on CPU, GPU is strongly suggested for high-speed ptychographic reconstructions. 
     - *PtyRAD* supports both NVIDIA GPUs with CUDA and Apple Silicon (MPS)
 * *PtyRAD* was tested on Windows, MacOS, and Linux

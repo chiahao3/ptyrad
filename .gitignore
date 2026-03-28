@@ -5,6 +5,7 @@ data/
 output/
 params/
 torch_compile_debug/
+.claude/
 
 # setuptools build artifacts
 build/
