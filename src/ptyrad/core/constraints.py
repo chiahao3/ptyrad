@@ -143,6 +143,18 @@ class CombinedConstraint(torch.nn.Module):
             probe_pow = (probe_int.sum((1,2))/probe_int.sum()).detach().cpu().numpy().round(3)
             logger.debug(f"Apply ortho pmode constraint at iter {niter}, relative pmode power = {probe_pow}, probe int sum = {probe_int.sum():.4f}")
     
+    def apply_ortho_opr_basis(self, model, niter):
+        ''' Apply orthogonality constraint to OPR variable-probe basis '''
+
+        if not getattr(model, 'opr_enabled', False):
+            return
+        if self._should_apply_at_iter('ortho_opr_basis', niter):
+            basis = model.get_complex_opr_basis_view()  # (n_opr, Ny, Nx)
+            model.opt_probe_opr_basis.copy_(torch.view_as_real(orthogonalize_modes_vec(basis, sort=True)))
+            basis_int = model.get_complex_opr_basis_view().abs().pow(2)
+            basis_pow = basis_int.sum((1, 2)).detach().cpu().numpy().round(6)
+            logger.debug(f"Apply ortho OPR basis constraint at iter {niter}, per-mode int sums = {basis_pow}")
+
     def apply_fix_probe_int(self, model, niter):
         ''' Apply probe intensity constraint '''
         # Note that the probe intensity fluctuation (std/mean) is typically only 0.5%, there's very little point to do a position-dependent probe intensity constraint
@@ -371,7 +383,31 @@ class CombinedConstraint(torch.nn.Module):
             obj_tilts = (model.opt_obj_tilts.reshape(N_scan_slow, N_scan_fast, 2)).permute(2,0,1)
             model.opt_obj_tilts.copy_(gaussian_blur(obj_tilts, kernel_size=5, sigma=tilt_smooth_std).permute(1,2,0).reshape(-1,2))
             logger.debug(f"Apply Gaussian blur with std = {tilt_smooth_std} scan positions on obj_tilts at iter {niter}")
-    
+
+    def apply_opr_coeffs_smooth(self, model, niter):
+        ''' Apply Gaussian blur to OPR per-position coefficients along the 2D scan grid '''
+        # Smoothing is applied along the scan-grid dimensions (N_scan_slow, N_scan_fast); unit of std is "scan positions".
+        # Requires regular grid (N_scan_slow * N_scan_fast == N_scans); non-regular scans skip this constraint.
+
+        if not getattr(model, 'opr_enabled', False):
+            return
+        if self._should_apply_at_iter('opr_coeffs_smooth', niter) and self.constraint_params['opr_coeffs_smooth']['std'] != 0:
+            std = self.constraint_params['opr_coeffs_smooth']['std']
+            kernel_size = self.constraint_params['opr_coeffs_smooth'].get('kernel_size', 5)
+            N_scan_slow = int(model.N_scan_slow)
+            N_scan_fast = int(model.N_scan_fast)
+            coeffs = model.opt_probe_opr_coeffs  # (N_scans, n_opr)
+            N_scans, n_opr = coeffs.shape
+
+            if N_scan_slow * N_scan_fast != N_scans:
+                logger.debug(f"`opr_coeffs_smooth` requires a regular scan grid but {N_scan_slow}*{N_scan_fast} != {N_scans}; skip this constraint")
+                return
+
+            coeffs_grid = coeffs.reshape(N_scan_slow, N_scan_fast, n_opr).permute(2, 0, 1)  # (n_opr, slow, fast)
+            coeffs_smoothed = gaussian_blur(coeffs_grid, kernel_size=kernel_size, sigma=std)
+            model.opt_probe_opr_coeffs.copy_(coeffs_smoothed.permute(1, 2, 0).reshape(N_scans, n_opr))
+            logger.debug(f"Apply Gaussian blur with std = {std} scan positions on probe_opr_coeffs at iter {niter}")
+
     def forward(self, model, niter):
         """
         Applies constraints to the optimizable `model` parameters if `niter` satisfies the pre-determined conditions (start_iter, step, end_iter)
@@ -383,6 +419,7 @@ class CombinedConstraint(torch.nn.Module):
             self.apply_probe_mask_k  (model, niter)
             self.apply_probe_mask_r  (model, niter)
             self.apply_ortho_pmode   (model, niter)
+            self.apply_ortho_opr_basis(model, niter)
             self.apply_fix_probe_int (model, niter)
             # Object constraints
             self.apply_obj_rblur     (model, niter)
@@ -399,6 +436,8 @@ class CombinedConstraint(torch.nn.Module):
             self.apply_pos_recenter  (model, niter)
             # Local tilt constraint
             self.apply_tilt_smooth   (model, niter)
+            # OPR coefficient smoothing
+            self.apply_opr_coeffs_smooth(model, niter)
 
 ###### Filter and helper functions for constraints ######
 def sort_by_mode_int(modes):

@@ -54,9 +54,18 @@ class UpdateParams(BaseModel):
         default={"start_iter": 1, "lr": 5.0e-4},
         description="Sub-pixel probe position shifts update params",
     )
+    probe_opr_basis: Dict[str, Union[int, float, None]] = Field(
+        default={"start_iter": None, "lr": 0.0},
+        description="OPR variable-probe basis update params",
+    )
+    probe_opr_coeffs: Dict[str, Union[int, float, None]] = Field(
+        default={"start_iter": None, "lr": 0.0},
+        description="OPR per-position coefficients update params",
+    )
 
     @field_validator(
-        "obja", "objp", "obj_tilts", "slice_thickness", "probe", "probe_pos_shifts", mode="after"
+        "obja", "objp", "obj_tilts", "slice_thickness", "probe", "probe_pos_shifts",
+        "probe_opr_basis", "probe_opr_coeffs", mode="after"
     )
     @classmethod
     def validate_update_params(cls, v: Dict[str, Any], field) -> Dict[str, Any]:
@@ -81,7 +90,8 @@ class UpdateParams(BaseModel):
     @model_validator(mode="after")
     def validate_all_start_iter(self):
         """Ensure not all start_iter are None or all > 1."""
-        fields = ["obja", "objp", "obj_tilts", "slice_thickness", "probe", "probe_pos_shifts"]
+        fields = ["obja", "objp", "obj_tilts", "slice_thickness", "probe", "probe_pos_shifts",
+                  "probe_opr_basis", "probe_opr_coeffs"]
         start_iters = [self.__dict__[field].get("start_iter") for field in fields]
 
         # start_iter can not be all None or all > 1

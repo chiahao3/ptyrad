@@ -165,12 +165,14 @@ def make_save_dict(output_path, model, params, optimizer, niter, indices, batch_
     # the model behavior and learning rates could also be different from the initial params dict if the user
     # run the reconstuction with manually modified `model_params` in the detailed walkthrough notebook
     
-    # Postprocess the opt_probe back to complex view
+    # Postprocess the opt_probe (and OPR basis) back to complex view
     optimizable_tensors = {}
     for name, tensor in model.optimizable_tensors.items():
         optimizable_tensors[name] = tensor.detach().clone()
         if name == 'probe':
             optimizable_tensors['probe'] = model.get_complex_probe_view().detach().clone()
+        elif name == 'probe_opr_basis':
+            optimizable_tensors['probe_opr_basis'] = model.get_complex_opr_basis_view().detach().clone()
     
     from ptyrad import __version__ as ptyrad_version
         

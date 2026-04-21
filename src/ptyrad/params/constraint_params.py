@@ -181,6 +181,24 @@ class TiltSmooth(BaseModel):
     std: float = Field(default=2.0, ge=0.0, description="Standard deviation for Gaussian blur of tilts")
 
 
+class OrthoOprBasis(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    start_iter: Optional[int] = Field(default=None, ge=1, description="Start iteration of applying orthogonalization to OPR basis")
+    step: Optional[int] = Field(default=1, ge=1, description="Interval of iterations of applying orthogonalization to OPR basis")
+    end_iter: Optional[int] = Field(default=None, ge=1, description="End iteration of applying orthogonalization to OPR basis")
+
+
+class OprCoeffsSmooth(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    start_iter: Optional[int] = Field(default=None, ge=1, description="Start iteration of applying smoothing to OPR coefficients")
+    step: Optional[int] = Field(default=1, ge=1, description="Interval of iterations of applying smoothing to OPR coefficients")
+    end_iter: Optional[int] = Field(default=None, ge=1, description="End iteration of applying smoothing to OPR coefficients")
+    kernel_size: int = Field(default=5, ge=1, description="Kernel size for 2D Gaussian blur over the scan grid (odd, >6*std+1)")
+    std: float = Field(default=0.0, ge=0.0, description="Standard deviation for 2D Gaussian blur over the scan grid (0 disables)")
+
+
 class ConstraintParams(BaseModel):
     """
     Generally, these constraint functions are applied after each (or a couple) iteration(s) to stabilize the optimization trajectories
@@ -381,10 +399,33 @@ class ConstraintParams(BaseModel):
         default_factory=TiltSmooth, description="Smoothing of local object tilts"
     )
     """
-    Apply a lateral Gaussian blur of the local object tilts in unit of "scan positions". 
+    Apply a lateral Gaussian blur of the local object tilts in unit of "scan positions".
     This smoothens the local tilts so that you don't have drastic changes of object tilts between scan positions.
     """
-    
+
+    ortho_opr_basis: OrthoOprBasis = Field(
+        default_factory=OrthoOprBasis, description="Orthogonalization of OPR variable-probe basis"
+    )
+    """
+    Apply Gram-matrix eigen-decomposition based orthogonalization on the OPR basis
+    (``opt_probe_opr_basis``) to keep basis modes orthonormal during optimization.
+    Reuses the same ``orthogonalize_modes_vec`` routine used for ``ortho_pmode``.
+    Set ``start_iter`` to a positive integer to activate; leave as ``null`` to disable.
+    Only applies when ``probe_opr_modes > 0``.
+    """
+
+    opr_coeffs_smooth: OprCoeffsSmooth = Field(
+        default_factory=OprCoeffsSmooth, description="Smoothing of OPR per-position coefficients over the scan grid"
+    )
+    """
+    Apply a 2D Gaussian blur to the OPR coefficient tensor shaped
+    ``(N_scans, n_opr)`` reshaped as ``(n_opr, N_scan_slow, N_scan_fast)``.
+    The unit of ``std`` is "scan positions". Useful to suppress high-frequency noise
+    in the per-position OPR coefficients and enforce the expected slow variation of
+    probe across the scan grid. ``std: 0`` disables the blur. Only applies when
+    ``probe_opr_modes > 0`` and the scan grid is regular (``N_scan_slow * N_scan_fast == N_scans``).
+    """
+
 
 # Make explicit list so autodoc_pydantic can sort by this when go by `autodoc_pydantic_model_member_order = 'bysource'` in conf.py
 __all__ = [
@@ -403,5 +444,7 @@ __all__ = [
     "ObjaThresh",
     "ObjpPostiv",
     "PosRecenter",
-    "TiltSmooth"
+    "TiltSmooth",
+    "OrthoOprBasis",
+    "OprCoeffsSmooth"
 ]
