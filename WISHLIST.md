@@ -72,7 +72,7 @@ Last Update: 2026.02.14
 
 - Probe
     - Use a vacuum probe (either real or reciprocal space) to regularize the probe intensity and spatial distributions
-    - Develop Orthogonal Probe Relaxation (i.e., allow variable probe modes).
+    - ~~Develop Orthogonal Probe Relaxation (i.e., allow variable probe modes).~~ (Implemented: `init_params.probe_opr_modes` + update/constraint hooks; applied to dominant pmode=0.)
         - Seems important for X-rays
         - Don’t need to give up on the total intensity constraint
     - Fit aberration to k-space probe to enforce smoothness of the aberration chi function.

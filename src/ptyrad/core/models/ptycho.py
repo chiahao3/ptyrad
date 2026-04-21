@@ -48,6 +48,10 @@ class PtychoModel(torch.nn.Module):
         opt_obj_tilts (torch.Tensor): Tilts of the object.
         opt_probe (torch.Tensor): Probe function.
         opt_probe_pos_shifts (torch.Tensor): Shifts for the probe positions.
+        opt_probe_opr_basis (torch.Tensor): OPR variable-probe basis (n_opr, Ny, Nx) complex, applied to dominant pmode=0. Present only when ``opr_enabled``.
+        opt_probe_opr_coeffs (torch.Tensor): OPR per-position coefficients (N_scans, n_opr) float32. Present only when ``opr_enabled``.
+        opr_enabled (bool): Whether OPR (Orthogonal Probe Relaxation) is active.
+        n_opr (int): Number of OPR basis modes (0 when disabled).
         omode_occu (torch.Tensor): Occupation mode.
         H (torch.Tensor): Propagator matrix.
         measurements (torch.Tensor): Measurements for the ptychographic reconstruction.
@@ -108,6 +112,17 @@ class PtychoModel(torch.nn.Module):
             self.opt_slice_thickness    = nn.Parameter(torch.tensor(init_variables['slice_thickness'],          dtype=torch.float32, device=device))
             self.opt_probe              = nn.Parameter(torch.view_as_real(torch.tensor(init_variables['probe'], dtype=torch.complex64, device=device))) # The `torch.view_as_real` allows correct handling of DDP via NCCL even in PyTorch 2.4
             self.opt_probe_pos_shifts   = nn.Parameter(torch.tensor(init_variables['probe_pos_shifts'],         dtype=torch.float32, device=device))
+
+            # Optional OPR (Orthogonal Probe Relaxation) parameters — applied only to dominant pmode=0
+            opr_basis_np  = init_variables.get('probe_opr_basis')
+            opr_coeffs_np = init_variables.get('probe_opr_coeffs')
+            self.opr_enabled = opr_basis_np is not None and opr_coeffs_np is not None
+            if self.opr_enabled:
+                self.opt_probe_opr_basis  = nn.Parameter(torch.view_as_real(torch.tensor(opr_basis_np, dtype=torch.complex64, device=device)))
+                self.opt_probe_opr_coeffs = nn.Parameter(torch.tensor(opr_coeffs_np, dtype=torch.float32, device=device))
+                self.n_opr = int(self.opt_probe_opr_basis.shape[0])
+            else:
+                self.n_opr = 0
             
             # Buffers are used during forward pass
             self.register_buffer      ('omode_occu',      torch.tensor(init_variables['omode_occu'],       dtype=torch.float32, device=device))
@@ -147,6 +162,9 @@ class PtychoModel(torch.nn.Module):
                 'slice_thickness' : self.opt_slice_thickness,
                 'probe'           : self.opt_probe,
                 'probe_pos_shifts': self.opt_probe_pos_shifts}
+            if self.opr_enabled:
+                self.optimizable_tensors['probe_opr_basis']  = self.opt_probe_opr_basis
+                self.optimizable_tensors['probe_opr_coeffs'] = self.opt_probe_opr_coeffs
             self.create_optimizable_params_dict(self.lr_params)
 
             # Initialize propagator-related variables
@@ -162,6 +180,10 @@ class PtychoModel(torch.nn.Module):
         """ Retrieve complex view of the probe """
         # This is a post-processing to ensure minimal code changes in PtyRAD for the DDP (multiGPU) via NCCL due to limited support for Complex value
         return torch.view_as_complex(self.opt_probe)
+
+    def get_complex_opr_basis_view(self):
+        """ Retrieve complex view of the OPR variable-probe basis ``(n_opr, Ny, Nx)`` """
+        return torch.view_as_complex(self.opt_probe_opr_basis)
         
     def create_grids(self):
         """ Create the grids for shifting probes, selecting obj ROI, and Fresnel propagator in a vectorized approach """
@@ -213,11 +235,14 @@ class PtychoModel(torch.nn.Module):
         self.optimizable_params = []
         for param_name, lr in lr_params.items():
             if param_name not in self.optimizable_tensors:
-                raise ValueError(f"WARNING: '{param_name}' is not a valid parameter name, check your `update_params` and choose from 'obja', 'objp', 'obj_tilts', 'slice_thickness', 'probe', and 'probe_pos_shifts'")
+                # OPR keys always appear in update_params defaults but only register when opr_enabled
+                if param_name in ('probe_opr_basis', 'probe_opr_coeffs') and not self.opr_enabled:
+                    continue
+                raise ValueError(f"WARNING: '{param_name}' is not a valid parameter name, check your `update_params` and choose from 'obja', 'objp', 'obj_tilts', 'slice_thickness', 'probe', 'probe_pos_shifts', 'probe_opr_basis', and 'probe_opr_coeffs'")
             else:
                 self.optimizable_tensors[param_name].requires_grad = (lr != 0) and (self.start_iter[param_name] ==1) # Set requires_grad based on learning rate and start_iter
                 if lr != 0:
-                    self.optimizable_params.append({'params': [self.optimizable_tensors[param_name]], 'lr': lr})               
+                    self.optimizable_params.append({'params': [self.optimizable_tensors[param_name]], 'lr': lr})
         self.print_model_summary()
 
     def init_propagator_vars(self):
@@ -279,6 +304,13 @@ class PtychoModel(torch.nn.Module):
         logger.info(f"On-the-fly meas padding   : {True if self.meas_loader.meas_padded is not None else False}")
         logger.info(f"On-the-fly meas resample  : {True if self.meas_loader.meas_scale_factors is not None else False}")
         logger.info(f"On-the-fly simu match mode: {self.simu_match_mode}")
+        logger.info(f"OPR (position-variable probe): {self.opr_enabled} (n_opr={self.n_opr})")
+        if self.opr_enabled:
+            basis = self.get_complex_opr_basis_view().detach()
+            coeffs = self.opt_probe_opr_coeffs.detach()
+            basis_pow = basis.abs().pow(2).sum(dim=(-2, -1))
+            logger.info(f"OPR basis power per mode   : {[f'{p:.3e}' for p in basis_pow.tolist()]}")
+            logger.info(f"OPR coeffs mean / std      : {coeffs.mean().item():.3e} / {coeffs.std().item():.3e}")
         logger.info(" ")
     
     def get_obj_patches(self, indices):
@@ -304,13 +336,33 @@ class PtychoModel(torch.nn.Module):
         # If you're not trying to optimize probe positions, there's not much point using sub-px shifted stationary probes
         # So the function would broadcast the same probe across the batch dimension,
         # and would only be returning multiple sub-px shifted probes if you're optimizing self.opt_probe_pos_shifts
+        # When opr_enabled, per-position OPR contributions are added to the dominant pmode=0.
+        # Note: imshift_batch expects a 3D (pmode, Ny, Nx) input and produces (N, pmode, Ny, Nx) by applying per-sample shifts;
+        # by linearity of the FFT shift, we shift the 3D base probe and 3D OPR basis separately, then combine per-sample.
 
-        probe = self.get_complex_probe_view()
-        
+        probe = self.get_complex_probe_view()  # (pmode, Ny, Nx) complex64
+        N = indices.shape[0]
+
         if self.shift_probes:
-            probes = imshift_batch(probe, shifts = self.opt_probe_pos_shifts[indices], grid = self.shift_probes_grid)
+            probes = imshift_batch(probe, shifts=self.opt_probe_pos_shifts[indices], grid=self.shift_probes_grid)  # (N, pmode, Ny, Nx)
+        elif self.opr_enabled:
+            probes = probe.unsqueeze(0).expand(N, -1, -1, -1).contiguous()
         else:
-            probes = torch.broadcast_to(probe, (indices.shape[0], *probe.shape)) # Broadcast a batch dimension, essentially using same probe for all samples
+            probes = torch.broadcast_to(probe, (N, *probe.shape)) # Broadcast a batch dimension, essentially using same probe for all samples
+
+        if self.opr_enabled:
+            basis = self.get_complex_opr_basis_view()  # (n_opr, Ny, Nx)
+            if self.shift_probes:
+                basis_shifted = imshift_batch(basis, shifts=self.opt_probe_pos_shifts[indices], grid=self.shift_probes_grid)  # (N, n_opr, Ny, Nx)
+                coeffs = self.opt_probe_opr_coeffs[indices].to(basis_shifted.dtype)                                           # (N, n_opr)
+                contrib = torch.einsum("ns,nsyx->nyx", coeffs, basis_shifted).unsqueeze(1)                                    # (N, 1, Ny, Nx)
+            else:
+                coeffs = self.opt_probe_opr_coeffs[indices].to(basis.dtype)                                                   # (N, n_opr)
+                contrib = torch.einsum("ns,syx->nyx", coeffs, basis).unsqueeze(1)                                             # (N, 1, Ny, Nx)
+            if probes.shape[1] == 1:
+                probes = probes + contrib
+            else:
+                probes = torch.cat((probes[:, :1] + contrib, probes[:, 1:]), dim=1)
 
         return probes.contiguous()
     

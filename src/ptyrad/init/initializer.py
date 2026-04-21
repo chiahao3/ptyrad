@@ -394,6 +394,97 @@ class Initializer:
         logger.info(f"probe                         (pmode, Ny, Nx) = {probe.dtype}, {probe.shape}")
         logger.info(" ")
 
+    def init_opr(self):
+        """
+        Initialize the Orthogonal Probe Relaxation (OPR) basis and per-position coefficients.
+
+        Populates ``init_variables['probe_opr_basis']`` with shape ``(n_opr, Ny, Nx)`` complex64
+        and ``init_variables['probe_opr_coeffs']`` with shape ``(N_scans, n_opr)`` float32,
+        or ``None`` when ``init_params['probe_opr_modes'] == 0``.
+        OPR is applied only to the dominant (pmode=0) probe mode.
+        """
+        n_opr = int(self.init_params.get('probe_opr_modes', 0) or 0)
+        self.init_variables['probe_opr_modes'] = n_opr
+
+        if n_opr == 0:
+            self.init_variables['probe_opr_basis'] = None
+            self.init_variables['probe_opr_coeffs'] = None
+            return
+
+        logger.info(f"### Initializing OPR (n_opr = {n_opr}) ###")
+
+        probe = self.init_variables['probe']            # (pmode, Ny, Nx) complex
+        Ny, Nx = probe.shape[-2], probe.shape[-1]
+        N_scans = int(self.init_variables['N_scans'])
+        init_mode = self.init_params.get('probe_opr_init', 'zeros')
+        load_coeffs = bool(self.init_params.get('probe_opr_load_coeffs', False))
+
+        rng = np.random.default_rng(self.random_seed)
+        probe_int_avg = float(np.mean(np.abs(probe[0]) ** 2))
+
+        def _random_orthogonal_basis(n, scale):
+            re = rng.standard_normal((n, Ny, Nx)).astype('float32')
+            im = rng.standard_normal((n, Ny, Nx)).astype('float32')
+            basis = (re + 1j * im).astype('complex64')
+            # Scale each mode so its total intensity equals `scale` (small relative to main probe)
+            norms = np.sqrt(np.sum(np.abs(basis) ** 2, axis=(1, 2), keepdims=True)) + 1e-30
+            basis = basis * (np.sqrt(scale) / norms)
+            basis = orthogonalize_modes_vec_np(basis).astype('complex64')
+            return basis
+
+        # Select and build basis
+        if init_mode == 'ptyshv':
+            pending = getattr(self, '_pending_opr_basis', None)
+            if pending is None:
+                logger.info("probe_opr_init='ptyshv' but no vp axes were preserved from PtyShv probe; falling back to zeros")
+                basis = _random_orthogonal_basis(n_opr, scale=1e-6 * max(probe_int_avg, 1e-30))
+            else:
+                pending = pending.astype('complex64')
+                if pending.shape[-2:] != (Ny, Nx):
+                    raise ValueError(f"PtyShv vp basis shape {pending.shape} does not match probe spatial shape ({Ny}, {Nx})")
+                vp_now = pending.shape[0]
+                if vp_now >= n_opr:
+                    basis = pending[:n_opr]
+                    logger.info(f"Using first {n_opr} of {vp_now} PtyShv vp modes as OPR basis")
+                else:
+                    logger.info(f"PtyShv vp has {vp_now} modes, padding to n_opr={n_opr} with small random modes")
+                    pad = _random_orthogonal_basis(n_opr - vp_now, scale=1e-6 * max(probe_int_avg, 1e-30))
+                    basis = np.concatenate([pending, pad], axis=0).astype('complex64')
+                basis = orthogonalize_modes_vec_np(basis).astype('complex64')
+        elif init_mode == 'random':
+            basis = _random_orthogonal_basis(n_opr, scale=1e-3 * max(probe_int_avg, 1e-30))
+        else:  # 'zeros'
+            basis = _random_orthogonal_basis(n_opr, scale=1e-6 * max(probe_int_avg, 1e-30))
+
+        # Build coefficients
+        coeffs = np.zeros((N_scans, n_opr), dtype='float32')
+        pending_ptyrad_coeffs = getattr(self, '_pending_opr_coeffs_ptyrad', None)
+        if pending_ptyrad_coeffs is not None and pending_ptyrad_coeffs.shape == (N_scans, n_opr):
+            coeffs = pending_ptyrad_coeffs.astype('float32')
+            logger.info("Loaded OPR coefficients from PtyRAD ckpt (shape matches N_scans x n_opr)")
+        elif init_mode == 'ptyshv' and load_coeffs:
+            mat_path = getattr(self, '_pending_opr_coeffs_path', None)
+            if mat_path is None:
+                logger.info("probe_opr_load_coeffs=True but PtyShv mat path not available; coefficients kept at zero")
+            else:
+                try:
+                    pe = load_mat(mat_path, key='probe_evolution')
+                    pe = np.asarray(pe)
+                    if pe.ndim == 2 and pe.shape[0] == N_scans and pe.shape[1] >= 1 + n_opr:
+                        # PtychoShelves probe_evolution is (N_scans, 1 + vp) with col-0 as intensity scaling
+                        coeffs = pe[:, 1:1 + n_opr].astype('float32')
+                        logger.info(f"Loaded PtyShv probe_evolution columns 1..{n_opr} into OPR coefficients")
+                    else:
+                        logger.info(f"Unexpected probe_evolution shape {pe.shape}; coefficients kept at zero")
+                except Exception as e:
+                    logger.info(f"Failed to load 'probe_evolution' from {mat_path}: {e!r}; coefficients kept at zero")
+
+        self.init_variables['probe_opr_basis'] = basis
+        self.init_variables['probe_opr_coeffs'] = coeffs
+        logger.info(f"probe_opr_basis              (n_opr, Ny, Nx)    = {basis.dtype}, {basis.shape}")
+        logger.info(f"probe_opr_coeffs             (N_scans, n_opr)   = {coeffs.dtype}, {coeffs.shape}")
+        logger.info(" ")
+
     def init_pos(self):
         """
         Initialize the probe positions by loading and processing them.
@@ -664,6 +755,7 @@ class Initializer:
         self.set_variables_dict()
         self.init_probe()
         self.init_pos()
+        self.init_opr()
         self.init_obj()
         self.init_omode_occu()
         self.init_H()
@@ -1402,6 +1494,15 @@ class Initializer:
         pt_path = params
         ckpt = self.cache_contents if self.use_cached_probe else load_ptyrad(pt_path)
         probe = ckpt['optimizable_tensors']['probe']
+
+        # Opportunistically preserve OPR state if the ckpt contains it. `init_opr` will pick it up
+        # from `_pending_opr_basis` / `_pending_opr_coeffs` when `probe_opr_modes > 0`.
+        opt_tensors = ckpt.get('optimizable_tensors', {})
+        opr_basis  = opt_tensors.get('probe_opr_basis')
+        opr_coeffs = opt_tensors.get('probe_opr_coeffs')
+        if opr_basis is not None and opr_coeffs is not None:
+            self._pending_opr_basis        = np.asarray(opr_basis).astype('complex64')
+            self._pending_opr_coeffs_ptyrad = np.asarray(opr_coeffs).astype('float32')
         return probe
     
     def _load_probe_from_ptyshv(self, params: str):
@@ -1417,7 +1518,19 @@ class Initializer:
             logger.info(f"Reverse array axes order of probe to {probe.shape} because use_h5py = {use_h5py}, which automatically reverse the order")
         else:
             logger.info(f"Keep array axes order of probe at {probe.shape} because use_h5py = {use_h5py}")
-        
+
+        # Stash extra vp axes (index >= 1) as pending OPR basis for later `init_opr` consumption.
+        # Final main probe uses vp[..., 0] to preserve existing behavior.
+        self._pending_opr_basis = None
+        self._pending_opr_coeffs_path = None
+        if probe.ndim == 4 and probe.shape[-1] > 1:
+            logger.info(f"Preserving vp axes vp[..., 1:] (count={probe.shape[-1] - 1}) as pending OPR basis; main probe uses vp[..., 0]")
+            opr_stack = probe[..., 1:]                      # (Ny, Nx, pmode, vp-1)
+            # Keep only pmode=0 slice since OPR is applied on the dominant pmode only
+            opr_basis_raw = opr_stack[:, :, 0, :]           # (Ny, Nx, vp-1)
+            self._pending_opr_basis = opr_basis_raw.transpose(2, 0, 1)  # (vp-1, Ny, Nx)
+            self._pending_opr_coeffs_path = mat_path        # kept for optional `probe_evolution` load
+
         # Correct the probe dimension to 3 dimensions, now it should be (Ny, Nx, pmode)
         if probe.ndim == 4:
             logger.info("Import only the 1st variable probe mode to make a final probe with (pmode, Ny, Nx)") # I don't find variable probe modes are particularly useful for electon ptychography
@@ -1425,11 +1538,11 @@ class Initializer:
         elif probe.ndim == 2:
             logger.info("Expanding PtyShv probe dimension to make a final probe with (pmode, Ny, Nx)")
             probe = probe[..., None]
-        
+
         # Final permutation to make it (pmode, Ny, Nx)
         probe = probe.transpose(2,0,1)
         logger.info(f"Permute the array axes order of probe to {probe.shape} make it (pmode, Ny, Nx)")
-        
+
         return probe
     
     def _load_probe_from_py4dstem(self, params: str):

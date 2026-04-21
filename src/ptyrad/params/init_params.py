@@ -829,7 +829,45 @@ class InitParams(BaseModel):
 
     See ``ptyrad.optics.probe.make_mixed_probe`` for more details
     """
-    
+
+    probe_opr_modes: int = Field(default=0, ge=0, description="Number of OPR variable-probe basis modes; 0 disables OPR")
+    """
+    Number of Orthogonal Probe Relaxation (OPR) basis modes (a.k.a. variable probe modes).
+
+    OPR models per-scan-position probe variation as
+    ``P_n(y,x) = P0(y,x) + sum_s c_{n,s} * V_s(y,x)``,
+    where ``V_s`` are ``probe_opr_modes`` orthogonal basis functions and
+    ``c_{n,s}`` are per-position coefficients.
+
+    **Example:**
+
+    .. code-block:: yaml
+
+        'probe_opr_modes': 0
+
+    Set to ``0`` to disable OPR (default). Typical non-zero values are 1-3.
+
+    OPR is only applied to the dominant (pmode=0) probe mode. See ``probe_opr_init``
+    for initialization strategy and the ``ortho_opr_basis`` / ``opr_coeffs_smooth``
+    constraints for iter-wise regularization.
+    """
+
+    probe_opr_init: Literal['zeros', 'ptyshv', 'random'] = Field(default='zeros', description="Initialization strategy for OPR basis")
+    """
+    Initialization strategy for the OPR basis. Ignored when ``probe_opr_modes == 0``.
+
+    - ``'zeros'`` (default): basis is a small-amplitude orthogonalized random field; coefficients are 0. Iter-1 forward is bit-identical to running without OPR.
+    - ``'ptyshv'``: reuse the variable-probe (``vp``) axis from a loaded PtyShv probe ``.mat``. Falls back to ``'zeros'`` when the loaded probe has no ``vp`` dimension.
+    - ``'random'``: orthogonalized complex Gaussian basis.
+    """
+
+    probe_opr_load_coeffs: bool = Field(default=False, description="Load OPR coefficients from PtyShv probe_evolution if available")
+    """
+    If ``True``, attempt to load OPR coefficients from the PtyShv ``probe_evolution``
+    field. Falls back to zero-initialization if unavailable. Only used when
+    ``probe_opr_init == 'ptyshv'``.
+    """
+
     obj_omode_max: int = Field(default=1, ge=1, description="Maximum number of mixed object modes")
     """
     Maximum number of mixed object modes.

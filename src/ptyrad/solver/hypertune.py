@@ -238,9 +238,10 @@ def optuna_objective(trial, params, init, loss_fn, constraint_fn, device='cuda')
         params['model_params']['optimizer_params']['configs'] = vparams['kwargs']['optim_configs'].get(optim_name, {}) # Update optimizer_configs if the user has specified them for each optimizer
     
     # learning rates
-    lr_to_tensor = {'plr': 'probe', 'oalr': 'obja', 'oplr': 'objp', 'slr': 'probe_pos_shifts', 'tlr': 'obj_tilts', 'dzlr': 'slice_thickness'}
-    for vname in ['plr', 'oalr', 'oplr', 'slr', 'tlr', 'dzlr']:
-        if tune_params[vname]['state']:
+    lr_to_tensor = {'plr': 'probe', 'oalr': 'obja', 'oplr': 'objp', 'slr': 'probe_pos_shifts', 'tlr': 'obj_tilts', 'dzlr': 'slice_thickness',
+                    'oprblr': 'probe_opr_basis', 'oprclr': 'probe_opr_coeffs'}
+    for vname in ['plr', 'oalr', 'oplr', 'slr', 'tlr', 'dzlr', 'oprblr', 'oprclr']:
+        if vname in tune_params and tune_params[vname]['state']:
             vparams = tune_params[vname]
             params['model_params']['update_params'][lr_to_tensor[vname]]['lr'] = get_optuna_suggest(trial, vparams['suggest'], vname, vparams['kwargs'])
     
@@ -253,6 +254,7 @@ def optuna_objective(trial, params, init, loss_fn, constraint_fn, device='cuda')
         init.set_variables_dict()
         init.init_probe()
         init.init_pos()
+        init.init_opr()
         init.init_obj()
         init.init_H()
         
@@ -291,6 +293,7 @@ def optuna_objective(trial, params, init, loss_fn, constraint_fn, device='cuda')
     # Re-initialize the probe
     if remake_probe:
         init.init_probe()
+        init.init_opr()
             
     # Nlayer
     if tune_params['Nlayer']['state']:
@@ -324,6 +327,7 @@ def optuna_objective(trial, params, init, loss_fn, constraint_fn, device='cuda')
     if scan_affine != [1,0,0,0]:
         init.init_params['pos_scan_affine'] = scan_affine
         init.init_pos()
+        init.init_opr()
         init.init_obj() # Update obj initialization because the scan range has changed
     
     # tilt (This will override the current tilts and force it to be a global tilt (2,1))
