@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+### Added
+- Add JIT (`torch.compile`) auto-detection in `ptyrad/runtime/jit.py`. `recon_params.compiler_configs.enable` now defaults to `'auto'`, which checks right before the reconstruction loop whether JIT compilation is achievable on the current machine (PyTorch version, TorchDynamo/TorchInductor support, compute device, CUDA compute capability, Triton on GPU / C++ compiler on CPU) and then compiles a tiny probe function to functionally verify the toolchain. JIT is used when the check passes, otherwise PtyRAD logs the reason and gracefully falls back to eager mode. `enable: true` and `enable: false` keep forcing JIT on/off, and the new `compiler_configs.auto_probe` flag can skip the probe warmup
+- Add a "JIT compiler information" section to `print_system_info` reporting whether `torch.compile` is expected to work on this machine
+
 ## [1.0.0] - 2026-06-07
 ### Added
 - Add `ptyrad/analysis/` subpackage and `Analyzer` as public API to extract object, probe, and positions from PtyRAD output `model.hdf5` with offline plotting capability

@@ -57,13 +57,42 @@ class ResultModes(BaseModel):
 
 class CompilerConfigs(BaseModel):
     model_config = {"extra": "forbid"}
-    
-    enable: bool = Field(default=False, description="Boolean flag to turn on/off torch.compile") # Note that the torch.compile function signature and default are actually disable=False
+
+    enable: Union[Literal['auto'], bool] = Field(default='auto', description="Turn on/off torch.compile. 'auto' (default) enables it only if this machine supports JIT compilation") # Note that the torch.compile function signature and default are actually disable=False
+    """
+    Controls PyTorch JIT compilation (`torch.compile`).
+
+    - 'auto' (default): PtyRAD detects whether JIT compilation is achievable on this machine right
+      before the reconstruction loop starts (OS, PyTorch version, accelerator, GPU compute capability,
+      Triton / C++ compiler availability, plus a functional compile probe). JIT is used when the check
+      passes, otherwise PtyRAD gracefully falls back to eager mode.
+    - true: always compile. The capability check still runs and warns if the machine looks unsupported,
+      but the request is respected so failures surface instead of being silently skipped.
+    - false: never compile.
+    """
+
+    auto_probe: bool = Field(default=True, description="During 'auto' detection, additionally compile and run a tiny probe function to functionally verify the JIT toolchain")
+    """
+    Only used when 'enable' is 'auto'. When true (default), the auto-detection compiles and runs a
+    tiny probe function on the target device after the static environment check, which is the only
+    reliable way to catch machines with a broken or incomplete compiler toolchain. The probe adds a
+    one-time warmup (a few seconds, cached per process and reused across Optuna trials). Set to false
+    to decide purely from the static environment check and skip that warmup.
+    """
+
     fullgraph: bool = Field(default=False)
     dynamic: Optional[bool] = Field(default=None)
     backend: Literal['inductor', 'cudagraphs', 'ipex', 'onnxrt'] = Field(default='inductor')
     mode: Literal['default', 'reduce-overhead', 'max-autotune', 'max-autotune-no-cudagraphs'] = Field(default='default')
     options: Optional[dict[str, Union[str, int, bool]]] = Field(default=None)
+
+    @field_validator("enable", mode="before")
+    @classmethod
+    def normalize_enable(cls, v):
+        """Accept case-insensitive 'AUTO'/'Auto' spellings for convenience."""
+        if isinstance(v, str):
+            return v.strip().lower()
+        return v
 
 class ConvergenceMonitorParams(BaseModel):
     model_config = {"extra": "forbid"}
@@ -381,7 +410,9 @@ class ReconParams(BaseModel):
     compiler_configs: Optional[CompilerConfigs] = Field(default_factory=CompilerConfigs, description="PyTorch compiler configurations")
     """
     This dict specifies the PyTorch JIT compiler configurations.
-    Set to {'enable': true} to enable PyTorch JIT compilation for a 1.3-1.9x speedup on supported hardware.
+    The default {'enable': 'auto'} auto-detects whether JIT compilation is achievable on this machine
+    and uses it for a 1.3-1.9x speedup, otherwise it gracefully falls back to eager mode.
+    Set to {'enable': true} to force it on, or {'enable': false} to always run eager.
     See https://docs.pytorch.org/docs/stable/generated/torch.compile.html for more details.
 
     Generally, for torch.compile with Triton, you'll need CUDA GPU with Compute Capability >= 7.0.

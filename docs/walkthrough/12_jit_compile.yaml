@@ -56,4 +56,4 @@ recon_params:
     ##       Linux and macOS should support the PyTorch JIT compiler out-of-the-box. 
     ##       For Windows users, please follow the instruction and download triton-windows from https://github.com/woct0rdho/triton-windows
     ##       Nte that the speedup factor may depend on the task dimension, including Npix, pmode, Nlayer, and batch sizes.
-    compiler_configs: {'enable': true} # Set to {'enable': true} to enable PyTorch JIT compilation for a 1.3-1.9x speedup on supported hardware.
+    compiler_configs: {'enable': true} # Force PyTorch JIT compilation on for a 1.3-1.9x speedup. The default 'auto' would instead auto-detect JIT support and fall back to eager mode when unavailable.

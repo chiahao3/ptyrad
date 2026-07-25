@@ -20,6 +20,11 @@ def str2bool(v):
     else:
         raise argparse.ArgumentTypeError('Boolean value expected.')
 
+def str2bool_or_auto(v):
+    if isinstance(v, str) and v.strip().lower() == 'auto':
+        return 'auto'
+    return str2bool(v)
+
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(
@@ -31,7 +36,7 @@ if __name__ == "__main__":
     parser.add_argument("--gpuid", type=str, required=False, default="0", help="GPU ID to use ('acc', 'cpu', or an integer)")
     parser.add_argument("--jobid", type=int, required=False, default=0, help="Unique identifier for hypertune mode with multiple GPU workers")
     parser.add_argument("--n_iter", type=int, required=False, default=1, help="Iteration number")
-    parser.add_argument('--compile', type=str2bool, default=False, help="PyTorch JIT compilation")
+    parser.add_argument('--compile', type=str2bool_or_auto, default=False, help="PyTorch JIT compilation ('auto', true, or false)")
     parser.add_argument('--preload', type=str2bool, default=False, help="Preload data")
     parser.add_argument("--output_path", type=str, required=False, default="./output/", help="Output path")
 

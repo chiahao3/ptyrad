@@ -112,7 +112,11 @@ def print_system_info():
     # GPU information
     print_gpu_info()
     report(" ")
-    
+
+    # JIT (torch.compile) information
+    print_jit_info()
+    report(" ")
+
     # Python version and executable
     report("### Python information ###")
     report(f"Python Executable: {sys.executable}")
@@ -170,6 +174,31 @@ def print_gpu_info():
         report("         Please install PyTorch because it's the crucial dependency of PtyRAD.")
         report("         See https://github.com/chiahao3/ptyrad for PtyRAD installation guide.")
     
+def print_jit_info():
+    """Logs whether PyTorch JIT (`torch.compile`) is expected to work on this machine.
+
+    Only the cheap static capability check is reported here so that printing the
+    system information stays fast. The full detection, which additionally compiles
+    and runs a probe function, happens right before the reconstruction loop when
+    `compiler_configs` is set to {'enable': 'auto'} (the default).
+    """
+
+    report("### JIT compiler information ###")
+    try:
+        from ptyrad.runtime.jit import check_jit_support, resolve_device_type
+
+        device_type = resolve_device_type()
+        supported, reason = check_jit_support(device_type)
+        report(f"Expected compute device: {device_type}")
+        report(f"JIT (torch.compile) available: {supported}")
+        report(f"  {reason}")
+        if not supported:
+            report("  INFO: With the default `compiler_configs: {'enable': 'auto'}`, PtyRAD falls back to eager mode automatically.")
+    except ImportError:
+        report("WARNING: No JIT information because PyTorch can't be imported.")
+    except Exception as e:
+        report(f"Error while checking JIT support: {e}")
+
 def print_packages_info():
     """Logs installed versions of critical Python dependencies.
 

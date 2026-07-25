@@ -206,7 +206,8 @@ def optuna_objective(trial, params, init, loss_fn, constraint_fn, device='cuda')
     grad_accumulation = recon_params['BATCH_SIZE'].get("grad_accumulation", 1)
     output_dir        = recon_params['output_dir']
     selected_figs     = recon_params['selected_figs']
-    compiler_configs  = parse_torch_compile_configs(recon_params['compiler_configs'])
+    compiler_configs  = parse_torch_compile_configs(recon_params['compiler_configs'], device=device) # Resolves 'enable': 'auto' by detecting the JIT capability of this machine (cached across trials)
+    use_jit_compile   = not compiler_configs.get('disable', False)
     
     # Parse the hypertune_params
     hypertune_params  = params['hypertune_params']
@@ -366,7 +367,7 @@ def optuna_objective(trial, params, init, loss_fn, constraint_fn, device='cuda')
         toggle_grad_requires(model, niter)
         
         # Apply torch.compile
-        if niter in model.compilation_iters: # compilation_iters always contain niter=1
+        if use_jit_compile and niter in model.compilation_iters: # compilation_iters always contain niter=1
             logger.info(f"Setting up PyTorch compiler with {compiler_configs}")
             torch._dynamo.reset()
             compute_loss_fn = torch.compile(compute_loss, **compiler_configs)

@@ -15,6 +15,7 @@ from ptyrad.params.parser import copy_params_to_dir
 from ptyrad.plotting.basic import plot_pos_grouping
 from ptyrad.plotting.model import plot_summary
 from ptyrad.runtime.convergence import create_convergence_monitor
+from ptyrad.runtime.jit import resolve_jit_enable
 from ptyrad.runtime.seed import set_random_seed
 from ptyrad.solver.grouping import (
     remap_batches_to_global,
@@ -485,7 +486,15 @@ def recon_loop(model, init, params, optimizer, scheduler, loss_fn, constraint_fn
     SAVE_ITERS        = recon_params['SAVE_ITERS']
     grad_accumulation = recon_params['BATCH_SIZE'].get("grad_accumulation", 1)
     selected_figs     = recon_params['selected_figs']
-    compiler_configs  = parse_torch_compile_configs(recon_params['compiler_configs'])
+
+    # Use the method on the wrapped model (DDP) if it exists
+    model_instance = model.module if hasattr(model, "module") else model
+
+    # Resolve the JIT (torch.compile) configs right before the reconstruction loop.
+    # With the default 'enable': 'auto', this detects whether JIT compilation is achievable
+    # on this machine and falls back to eager mode if it isn't.
+    compiler_configs  = parse_torch_compile_configs(recon_params['compiler_configs'], device=getattr(model_instance, 'device', None))
+    use_jit_compile   = not compiler_configs.get('disable', False)
 
     # Check on DDP and compiler_configs['fullgraph']
     is_distributed = (acc.num_processes > 1) if acc else isinstance(model, torch.nn.parallel.DistributedDataParallel)
@@ -496,9 +505,6 @@ def recon_loop(model, init, params, optimizer, scheduler, loss_fn, constraint_fn
     # Duplicate a compiler configs for optimizer because optimizer.step can't be compiled with fullgraph=True by design
     optim_compiler_configs = compiler_configs.copy()
     optim_compiler_configs['fullgraph'] = False
-    
-    # Use the method on the wrapped model (DDP) if it exists
-    model_instance = model.module if hasattr(model, "module") else model
 
     scheduler_step_unit = (params.get('model_params', {}).get('scheduler_params') or {}).get('step_unit', 'iter')
 
@@ -518,7 +524,7 @@ def recon_loop(model, init, params, optimizer, scheduler, loss_fn, constraint_fn
         toggle_grad_requires(model_instance, niter)
 
         # Apply torch.compile
-        if niter in model_instance.compilation_iters: # compilation_iters always contain niter=1
+        if use_jit_compile and niter in model_instance.compilation_iters: # compilation_iters always contain niter=1
             logger.info(f"Setting up PyTorch compiler with {compiler_configs}")
             torch._dynamo.reset()
             compute_loss_fn = torch.compile(compute_loss, **compiler_configs)
@@ -771,16 +777,28 @@ def time_sync(device=None):
     t = perf_counter()
     return t
 
-def parse_torch_compile_configs(configs):
+def parse_torch_compile_configs(configs, device=None):
     """
     Convert user-facing CompilerConfigs to dict suitable for torch.compile
-    
+
     Note:
-        The params.yaml defines as 'enable': bool = False, 
+        The params.yaml defines 'enable' as either 'auto' (default), true, or false,
         while torch.compile takes only 'disable': bool, so a conversion is needed.
+        When 'enable' is 'auto', the JIT capability of the current machine is detected
+        (see `ptyrad.runtime.jit`) and JIT is silently skipped if it's not achievable.
+
+    Args:
+        configs (dict or None): The user-facing `compiler_configs` dict.
+        device (torch.device or str or None, optional): The device the reconstruction runs on,
+            used for the JIT capability detection. None infers it from available accelerators.
+
+    Returns:
+        dict: A copy of `configs` with 'enable' replaced by the resolved 'disable' flag.
     """
-    if 'enable' in configs:
-        configs['disable'] = not configs.pop('enable')
+    configs = dict(configs or {}) # Copy so the user-facing params dict is not mutated
+    configs['disable'] = not resolve_jit_enable(configs, device=device)
+    for key in ('enable', 'auto_probe'): # PtyRAD-only keys that torch.compile doesn't take
+        configs.pop(key, None)
     return configs
 
 def toggle_grad_requires(model, niter):

@@ -1,10 +1,16 @@
 # 12. JIT Compile
 
-Enables PyTorch's JIT (just-in-time) compiler via `compiler_configs: {enable: true}`, which fuses and optimizes GPU kernels at runtime for a measured 1.3–1.9× speedup.
+Controls PyTorch's JIT (just-in-time) compiler via `compiler_configs: {enable: ...}`, which fuses and optimizes GPU kernels at runtime for a measured 1.3–1.9× speedup.
 
-**When to use:** Production runs on Linux or macOS where the one-time compilation warmup is acceptable and maximum throughput is desired. Particularly beneficial for large reconstructions run over many iterations. If the hardware permits, it's almost always better to run in JIT mode for significant speedup.
+`enable` accepts three values:
 
-**Tradeoffs & limitations:** The first epoch incurs a compilation overhead before the speedup takes effect. On Windows, requires the `triton-windows` package. Speedup follows a complicated scaling law with problem size (`Npix`, probe modes, slice count, batch sizes) — small problems see less benefit.
+- `'auto'` (default) — right before the reconstruction loop starts, PtyRAD checks whether JIT compilation is achievable on the current machine (PyTorch version, TorchDynamo/TorchInductor support, compute device, CUDA compute capability, Triton or C++ compiler availability) and then compiles and runs a tiny probe function to confirm the toolchain actually works. JIT is used when the check passes, otherwise PtyRAD logs the reason and falls back to eager mode.
+- `true` — always compile. The capability check still runs and warns when the machine looks unsupported, so failures surface instead of being silently skipped.
+- `false` — never compile.
+
+**When to use:** `'auto'` is the recommended setting for essentially all runs — it gives the speedup wherever the hardware permits and stays out of the way where it does not. Use `true` when benchmarking or debugging the compiled path and you want a hard failure rather than a fallback; use `false` to force eager mode, e.g. when comparing against a compiled run.
+
+**Tradeoffs & limitations:** The first epoch incurs a compilation overhead before the speedup takes effect, and the `'auto'` probe adds a one-time compile of a tiny function (cached per process, and reused across Optuna trials in hypertune mode). JIT on CUDA GPUs requires Triton and compute capability ≥ 7.0; on Windows that means the `triton-windows` package. JIT on Apple Silicon (MPS) requires PyTorch ≥ 2.7 for the TorchInductor Metal backend, and JIT on CPU requires a C++ compiler on `PATH`. Speedup follows a complicated scaling law with problem size (`Npix`, probe modes, slice count, batch sizes) — small problems see less benefit.
 
 ```{literalinclude} 12_jit_compile.yaml
 :language: yaml
