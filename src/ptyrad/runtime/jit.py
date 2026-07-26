@@ -14,7 +14,7 @@ Detection is done in two stages:
 
 1. A cheap *static* check of the environment (PyTorch version, Dynamo support,
    backend availability, GPU compute capability, Triton / C++ compiler).
-2. A *functional* probe that actually compiles and runs a tiny function
+2. A *functional* smoke test that actually compiles and runs a tiny function
    (forward + backward) on the target device, which is the only reliable way
    to catch broken toolchains that look fine on paper.
 
@@ -69,7 +69,7 @@ def resolve_device(device=None) -> str:
     """Resolve the canonical device string ('cuda:1', 'mps', 'cpu') used for JIT detection.
 
     The GPU index is preserved (and filled in from the current CUDA device when the caller
-    only gave a bare 'cuda') so that the capability check and the functional probe both
+    only gave a bare 'cuda') so that the capability check and the functional smoke test both
     target the exact GPU the reconstruction will run on, which matters on heterogeneous
     hosts where the visible GPUs have different compute capabilities.
 
@@ -189,7 +189,7 @@ def check_jit_support(device_str: str = "cpu", backend: str = "inductor") -> Tup
                 f"with PyTorch {torch.__version__}"
             )
     except ImportError:
-        pass  # Too old or trimmed-down build, let the functional probe be the judge
+        pass  # Too old or trimmed-down build, let the functional smoke test be the judge
 
     # (3) Backend-specific requirements
     if backend == "inductor":
@@ -233,13 +233,13 @@ def check_jit_support(device_str: str = "cpu", backend: str = "inductor") -> Tup
     )
 
 
-def _jit_probe_fn(x):
-    """Tiny function used to smoke-test the JIT compiler (kept at module level so Dynamo can trace it)."""
+def _jit_smoke_test_fn(x):
+    """Tiny function compiled by the JIT smoke test (kept at module level so Dynamo can trace it)."""
     return (x * x + 1.0).sum()
 
 
 def _sync_device(device) -> None:
-    """Synchronize the device so asynchronous kernel failures surface inside the probe."""
+    """Synchronize the device so asynchronous kernel failures surface inside the smoke test."""
     import torch
 
     try:
@@ -252,7 +252,7 @@ def _sync_device(device) -> None:
 
 
 @lru_cache(maxsize=None)
-def probe_jit_compile(
+def smoke_test_jit_compile(
     device_str: str = "cpu",
     backend: str = "inductor",
     fullgraph: bool = False,
@@ -265,7 +265,7 @@ def probe_jit_compile(
     reliable way to catch environments that pass the static check but have a
     broken compiler, missing CUDA headers, or an incompatible Triton build.
 
-    The probe compiles a 16x16 element function, so the cost is dominated by the
+    The smoke test compiles a 16x16 element function, so the cost is dominated by the
     one-time backend warmup (a few seconds at most) and is cached per-process.
 
     Note:
@@ -273,7 +273,7 @@ def probe_jit_compile(
         only Python-level exceptions are handled.
 
     Args:
-        device_str (str, optional): Target device, e.g. 'cpu', 'mps', or 'cuda:1'. The probe runs
+        device_str (str, optional): Target device, e.g. 'cpu', 'mps', or 'cuda:1'. The smoke test runs
             on the exact device given so it reflects the GPU used by the reconstruction.
             Defaults to 'cpu'.
         backend (str, optional): The ``torch.compile`` backend. Defaults to 'inductor'.
@@ -281,7 +281,7 @@ def probe_jit_compile(
         dynamic (bool or None, optional): Dynamic shape handling. Defaults to None.
 
     Returns:
-        tuple[bool, str]: (works, reason) describing whether the probe compiled and ran cleanly.
+        tuple[bool, str]: (works, reason) describing whether the smoke test compiled and ran cleanly.
     """
     import torch
 
@@ -295,18 +295,18 @@ def probe_jit_compile(
             warnings.simplefilter("ignore")
 
             x = torch.randn(16, 16, device=device, requires_grad=True)
-            compiled_fn = torch.compile(_jit_probe_fn, backend=backend, fullgraph=fullgraph, dynamic=dynamic)
+            compiled_fn = torch.compile(_jit_smoke_test_fn, backend=backend, fullgraph=fullgraph, dynamic=dynamic)
             out = compiled_fn(x)
             out.backward()
             _sync_device(device)
 
             # Guard against a backend that "succeeds" but returns garbage
             if x.grad is None or not bool(torch.isfinite(out).all()) or not bool(torch.isfinite(x.grad).all()):
-                return False, "the compiled probe function returned non-finite values"
+                return False, "the compiled smoke-test function returned non-finite values"
 
     except Exception as err:
         # torch.compile failures surface as BackendCompilerFailed, Unsupported, ImportError, OSError, RuntimeError...
-        return False, f"torch.compile probe failed with {type(err).__name__}: {err}"
+        return False, f"torch.compile smoke test failed with {type(err).__name__}: {err}"
     finally:
         # Leave no compiled state behind, the reconstruction loop resets and compiles its own graphs
         try:
@@ -314,15 +314,15 @@ def probe_jit_compile(
         except Exception:
             pass
 
-    return True, f"torch.compile probe succeeded on device '{device_str}' with backend '{backend}'"
+    return True, f"torch.compile smoke test succeeded on device '{device_str}' with backend '{backend}'"
 
 
 def detect_jit_capability(device=None, backend: str = "inductor", fullgraph: bool = False,
-                          dynamic: Optional[bool] = None, run_probe: bool = True) -> Tuple[bool, str]:
+                          dynamic: Optional[bool] = None, run_smoke_test: bool = True) -> Tuple[bool, str]:
     """Detect whether JIT compilation is achievable on this machine.
 
     Runs the static environment check first and, if it passes, the functional
-    ``torch.compile`` probe.
+    ``torch.compile`` smoke test.
 
     Args:
         device (torch.device or str or None, optional): Target device. None infers it
@@ -330,7 +330,7 @@ def detect_jit_capability(device=None, backend: str = "inductor", fullgraph: boo
         backend (str, optional): The ``torch.compile`` backend. Defaults to 'inductor'.
         fullgraph (bool, optional): Whether to require a graph break-free trace. Defaults to False.
         dynamic (bool or None, optional): Dynamic shape handling. Defaults to None.
-        run_probe (bool, optional): Set to False to only run the cheap static check.
+        run_smoke_test (bool, optional): Set to False to only run the cheap static check.
             Defaults to True.
 
     Returns:
@@ -339,13 +339,13 @@ def detect_jit_capability(device=None, backend: str = "inductor", fullgraph: boo
     device_str = resolve_device(device)
 
     supported, reason = check_jit_support(device_str, backend)
-    if not supported or not run_probe:
+    if not supported or not run_smoke_test:
         return supported, reason
 
-    return probe_jit_compile(device_str, backend, fullgraph, dynamic)
+    return smoke_test_jit_compile(device_str, backend, fullgraph, dynamic)
 
 
-def resolve_jit_enable(configs: Optional[dict], device=None, run_probe: Optional[bool] = None) -> bool:
+def resolve_jit_enable(configs: Optional[dict], device=None, run_smoke_test: Optional[bool] = None) -> bool:
     """Resolve the user-facing ``compiler_configs['enable']`` flag into a concrete bool.
 
     The flag accepts:
@@ -359,17 +359,17 @@ def resolve_jit_enable(configs: Optional[dict], device=None, run_probe: Optional
     Args:
         configs (dict or None): The ``compiler_configs`` dict.
         device (torch.device or str or None, optional): Target device.
-        run_probe (bool or None, optional): Whether the 'auto' detection runs the functional
-            probe on top of the static check. Defaults to None, which follows
-            ``configs['auto_probe']`` (itself defaulting to True).
+        run_smoke_test (bool or None, optional): Whether the 'auto' detection runs the functional
+            smoke test on top of the static check. Defaults to None, which follows
+            ``configs['auto_smoke_test']`` (itself defaulting to True).
 
     Returns:
         bool: Whether ``torch.compile`` should be applied.
     """
     configs = configs or {}
     enable = configs.get("enable", "auto")
-    if run_probe is None:
-        run_probe = bool(configs.get("auto_probe", True))
+    if run_smoke_test is None:
+        run_smoke_test = bool(configs.get("auto_smoke_test", True))
 
     if isinstance(enable, str):
         enable = enable.strip().lower()
@@ -399,7 +399,7 @@ def resolve_jit_enable(configs: Optional[dict], device=None, run_probe: Optional
 
     logger.info(f"### Auto-detecting JIT (torch.compile) capability on device '{device_str}' ###")
     achievable, reason = detect_jit_capability(
-        device=device, backend=backend, fullgraph=fullgraph, dynamic=dynamic, run_probe=run_probe
+        device=device, backend=backend, fullgraph=fullgraph, dynamic=dynamic, run_smoke_test=run_smoke_test
     )
 
     if achievable:

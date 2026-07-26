@@ -179,8 +179,8 @@ def print_jit_info():
 
     Only the cheap static capability check is reported here so that printing the
     system information stays fast. The full detection, which additionally compiles
-    and runs a probe function, happens right before the reconstruction loop when
-    `compiler_configs` is set to {'enable': 'auto'} (the default).
+    and runs a tiny function as a smoke test, happens right before the reconstruction
+    loop when `compiler_configs` is set to {'enable': 'auto'} (the default).
     """
 
     report("### JIT compiler information ###")

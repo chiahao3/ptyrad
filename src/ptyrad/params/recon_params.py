@@ -64,20 +64,20 @@ class CompilerConfigs(BaseModel):
 
     - 'auto' (default): PtyRAD detects whether JIT compilation is achievable on this machine right
       before the reconstruction loop starts (OS, PyTorch version, accelerator, GPU compute capability,
-      Triton / C++ compiler availability, plus a functional compile probe). JIT is used when the check
+      Triton / C++ compiler availability, plus a functional compile smoke test). JIT is used when the check
       passes, otherwise PtyRAD gracefully falls back to eager mode.
     - true: always compile. The capability check still runs and warns if the machine looks unsupported,
       but the request is respected so failures surface instead of being silently skipped.
     - false: never compile.
     """
 
-    auto_probe: bool = Field(default=True, description="During 'auto' detection, additionally compile and run a tiny probe function to functionally verify the JIT toolchain")
+    auto_smoke_test: bool = Field(default=True, description="During 'auto' detection, additionally compile and run a tiny function as a smoke test to functionally verify the JIT toolchain")
     """
     Only used when 'enable' is 'auto'. When true (default), the auto-detection compiles and runs a
-    tiny probe function on the target device after the static environment check, which is the only
-    reliable way to catch machines with a broken or incomplete compiler toolchain. The probe adds a
-    one-time warmup (a few seconds, cached per process and reused across Optuna trials). Set to false
-    to decide purely from the static environment check and skip that warmup.
+    tiny function on the target device after the static environment check, which is the only
+    reliable way to catch machines with a broken or incomplete compiler toolchain. The smoke test
+    adds a one-time warmup (a few seconds, cached per process and reused across Optuna trials).
+    Set to false to decide purely from the static environment check and skip that warmup.
     """
 
     fullgraph: bool = Field(default=False)

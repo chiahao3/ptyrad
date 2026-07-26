@@ -10,10 +10,10 @@ from ptyrad.runtime import jit
 def clear_jit_caches():
     """The capability checks are cached per-process, so clear them around every test."""
     jit.check_jit_support.cache_clear()
-    jit.probe_jit_compile.cache_clear()
+    jit.smoke_test_jit_compile.cache_clear()
     yield
     jit.check_jit_support.cache_clear()
-    jit.probe_jit_compile.cache_clear()
+    jit.smoke_test_jit_compile.cache_clear()
 
 
 # --------------------------------------------------------------------------------------
@@ -23,7 +23,7 @@ def clear_jit_caches():
 def test_compiler_configs_defaults_to_auto():
     configs = CompilerConfigs()
     assert configs.enable == "auto"
-    assert configs.auto_probe is True
+    assert configs.auto_smoke_test is True
 
 
 def test_recon_params_defaults_to_auto():
@@ -47,68 +47,68 @@ def test_compiler_configs_enable_rejects_unknown_string():
 # resolve_jit_enable
 # --------------------------------------------------------------------------------------
 
-def _patch_detection(monkeypatch, supported, probe_ok=True, device_str="cpu"):
-    calls = {"static": [], "probe": []}
+def _patch_detection(monkeypatch, supported, smoke_test_ok=True, device_str="cpu"):
+    calls = {"static": [], "smoke_test": []}
 
     def fake_static(device="cpu", backend="inductor"):
         calls["static"].append(device)
         return (supported, "static reason")
 
-    def fake_probe(device="cpu", backend="inductor", fullgraph=False, dynamic=None):
-        calls["probe"].append(device)
-        return (probe_ok, "probe reason")
+    def fake_smoke_test(device="cpu", backend="inductor", fullgraph=False, dynamic=None):
+        calls["smoke_test"].append(device)
+        return (smoke_test_ok, "smoke test reason")
 
     monkeypatch.setattr(jit, "check_jit_support", fake_static)
-    monkeypatch.setattr(jit, "probe_jit_compile", fake_probe)
+    monkeypatch.setattr(jit, "smoke_test_jit_compile", fake_smoke_test)
     monkeypatch.setattr(jit, "resolve_device", lambda device=None: device_str)
     return calls
 
 
 def test_auto_enables_when_supported(monkeypatch):
-    calls = _patch_detection(monkeypatch, supported=True, probe_ok=True)
+    calls = _patch_detection(monkeypatch, supported=True, smoke_test_ok=True)
     assert jit.resolve_jit_enable({"enable": "auto"}) is True
-    assert len(calls["static"]) == 1 and len(calls["probe"]) == 1
+    assert len(calls["static"]) == 1 and len(calls["smoke_test"]) == 1
 
 
-def test_detection_carries_the_selected_device_into_check_and_probe(monkeypatch):
-    calls = _patch_detection(monkeypatch, supported=True, probe_ok=True, device_str="cuda:1")
+def test_detection_carries_the_selected_device_into_check_and_smoke_test(monkeypatch):
+    calls = _patch_detection(monkeypatch, supported=True, smoke_test_ok=True, device_str="cuda:1")
     assert jit.resolve_jit_enable({"enable": "auto"}, device="cuda:1") is True
     assert calls["static"] == ["cuda:1"]
-    assert calls["probe"] == ["cuda:1"]
+    assert calls["smoke_test"] == ["cuda:1"]
 
 
 def test_auto_falls_back_when_static_check_fails(monkeypatch):
     calls = _patch_detection(monkeypatch, supported=False)
     assert jit.resolve_jit_enable({"enable": "auto"}) is False
-    assert calls["probe"] == []  # No point probing a machine that can't compile
+    assert calls["smoke_test"] == []  # No point smoke testing a machine that can't compile
 
 
-def test_auto_falls_back_when_probe_fails(monkeypatch):
+def test_auto_falls_back_when_smoke_test_fails(monkeypatch):
     """A machine that looks supported but whose toolchain is broken must fall back."""
-    _patch_detection(monkeypatch, supported=True, probe_ok=False)
+    _patch_detection(monkeypatch, supported=True, smoke_test_ok=False)
     assert jit.resolve_jit_enable({"enable": "auto"}) is False
 
 
-def test_auto_probe_false_skips_the_probe(monkeypatch):
-    calls = _patch_detection(monkeypatch, supported=True, probe_ok=False)
-    assert jit.resolve_jit_enable({"enable": "auto", "auto_probe": False}) is True
-    assert calls["probe"] == []
+def test_auto_smoke_test_false_skips_the_smoke_test(monkeypatch):
+    calls = _patch_detection(monkeypatch, supported=True, smoke_test_ok=False)
+    assert jit.resolve_jit_enable({"enable": "auto", "auto_smoke_test": False}) is True
+    assert calls["smoke_test"] == []
 
 
 def test_explicit_true_is_respected_even_when_unsupported(monkeypatch):
     calls = _patch_detection(monkeypatch, supported=False)
     assert jit.resolve_jit_enable({"enable": True}) is True
-    assert calls["probe"] == []  # Forced on, so no need to spend time probing
+    assert calls["smoke_test"] == []  # Forced on, so no need to spend time smoke testing
 
 
 def test_explicit_false_skips_detection_entirely(monkeypatch):
     calls = _patch_detection(monkeypatch, supported=True)
     assert jit.resolve_jit_enable({"enable": False}) is False
-    assert calls == {"static": [], "probe": []}
+    assert calls == {"static": [], "smoke_test": []}
 
 
 def test_missing_or_empty_configs_default_to_auto(monkeypatch):
-    _patch_detection(monkeypatch, supported=True, probe_ok=True)
+    _patch_detection(monkeypatch, supported=True, smoke_test_ok=True)
     assert jit.resolve_jit_enable(None) is True
     assert jit.resolve_jit_enable({}) is True
 
@@ -191,20 +191,20 @@ def test_check_jit_support_requires_cxx_compiler_on_cpu(monkeypatch):
     assert "C++ compiler" in reason
 
 
-def test_probe_reports_failure_instead_of_raising(monkeypatch):
+def test_smoke_test_reports_failure_instead_of_raising(monkeypatch):
     """A broken toolchain must degrade into a (False, reason) verdict, never an exception."""
 
     def boom(x):
         raise RuntimeError("broken backend")
 
-    monkeypatch.setattr(jit, "_jit_probe_fn", boom)
-    works, reason = jit.probe_jit_compile("cpu")
+    monkeypatch.setattr(jit, "_jit_smoke_test_fn", boom)
+    works, reason = jit.smoke_test_jit_compile("cpu")
     assert works is False
-    assert "probe failed" in reason
+    assert "smoke test failed" in reason
 
 
-def test_probe_reports_failure_on_invalid_device():
-    works, reason = jit.probe_jit_compile("not-a-device")
+def test_smoke_test_reports_failure_on_invalid_device():
+    works, reason = jit.smoke_test_jit_compile("not-a-device")
     assert works is False
     assert "invalid device type" in reason
 
@@ -221,7 +221,7 @@ def test_parse_torch_compile_configs_strips_ptyrad_only_keys(monkeypatch):
     parsed = reconstruction.parse_torch_compile_configs(user_configs, device="cpu")
 
     assert parsed["disable"] is False
-    assert "enable" not in parsed and "auto_probe" not in parsed
+    assert "enable" not in parsed and "auto_smoke_test" not in parsed
     assert parsed["backend"] == "inductor"
     # The user-facing params dict must not be mutated
     assert user_configs["enable"] == "auto"

@@ -797,7 +797,7 @@ def parse_torch_compile_configs(configs, device=None):
     """
     configs = dict(configs or {}) # Copy so the user-facing params dict is not mutated
     configs['disable'] = not resolve_jit_enable(configs, device=device)
-    for key in ('enable', 'auto_probe'): # PtyRAD-only keys that torch.compile doesn't take
+    for key in ('enable', 'auto_smoke_test'): # PtyRAD-only keys that torch.compile doesn't take
         configs.pop(key, None)
     return configs
 
