@@ -43,6 +43,7 @@ import os
 import platform
 import shutil
 import warnings
+from contextlib import contextmanager
 from functools import lru_cache
 from typing import Optional, Tuple
 
@@ -58,6 +59,9 @@ MIN_CUDA_CAPABILITY = (7, 0)
 # TorchInductor gained a Metal (MPS) codegen backend in PyTorch 2.7,
 # earlier versions raise or silently degrade when compiling on Apple Silicon GPUs
 MIN_TORCH_VERSION_MPS = (2, 7)
+
+# Keys of `compiler_configs` that belong to PtyRAD and must not reach torch.compile
+PTYRAD_ONLY_CONFIG_KEYS = ("enable", "auto_smoke_test")
 
 # Device types whose TorchInductor codegen path goes through Triton
 TRITON_DEVICE_TYPES = ("cuda", "xpu", "hpu")
@@ -310,22 +314,76 @@ def _sync_device(device) -> None:
         pass
 
 
-@lru_cache(maxsize=None)
-def smoke_test_jit_compile(
-    device_str: str = "cpu",
-    backend: str = "inductor",
-    fullgraph: bool = False,
-    dynamic: Optional[bool] = None,
-) -> Tuple[bool, str]:
+@contextmanager
+def _preserved_rng_state(device):
+    """Restore every RNG the smoke test could touch, so detection never shifts the user's stream.
+
+    The smoke test itself draws no random numbers, but TorchInductor does (`mode='max-autotune'`
+    benchmarks candidate kernels on random inputs). Since the result is cached, one run would
+    otherwise consume RNG that a second, identically seeded reconstruction in the same process
+    would not, silently desynchronizing anything downstream that samples (e.g. the random
+    subsampling inside `approx_torch_quantile`).
+    """
+    import torch
+
+    states = {}
+    try:
+        states["cpu"] = torch.get_rng_state()
+        if device.type == "cuda" and torch.cuda.is_available():
+            states["cuda"] = torch.cuda.get_rng_state(device)
+        elif device.type == "mps" and torch.backends.mps.is_available() and hasattr(torch.mps, "get_rng_state"):
+            states["mps"] = torch.mps.get_rng_state()
+    except Exception:
+        pass # Best effort, a missing snapshot must never block the smoke test
+
+    try:
+        yield
+    finally:
+        try:
+            if "cpu" in states:
+                torch.set_rng_state(states["cpu"])
+            if "cuda" in states:
+                torch.cuda.set_rng_state(states["cuda"], device)
+            if "mps" in states:
+                torch.mps.set_rng_state(states["mps"])
+        except Exception:
+            pass
+
+
+def _short(err, max_chars: int = 300) -> str:
+    """Trim an exception message for logging, since some backend errors dump every known option."""
+    message = " ".join(str(err).split())
+    if len(message) > max_chars:
+        message = f"{message[:max_chars]}... (truncated, re-run with --verbosity DEBUG for the full error)"
+    return message
+
+
+def _freeze(value):
+    """Make a compile-kwargs value hashable so it can key the smoke-test cache."""
+    if isinstance(value, dict):
+        return tuple(sorted((k, _freeze(v)) for k, v in value.items()))
+    if isinstance(value, (list, set, tuple)):
+        return tuple(_freeze(v) for v in value)
+    return value
+
+
+# Cache keyed by (device, effective compile kwargs). A plain dict rather than lru_cache because
+# the kwargs carry an unhashable 'options' dict that torch.compile needs back as a real dict.
+_SMOKE_TEST_CACHE: dict = {}
+
+
+def smoke_test_jit_compile(device_str: str = "cpu", **compile_kwargs) -> Tuple[bool, str]:
     """Functionally verify ``torch.compile`` by compiling and running a tiny function.
 
     This actually exercises the whole toolchain (Dynamo trace, backend codegen,
-    kernel build, forward, and backward) on the target device, which is the only
-    reliable way to catch environments that pass the static check but have a
-    broken compiler, missing CUDA headers, or an incompatible Triton build.
+    kernel build, forward, and backward) on the target device with the *same* kwargs
+    the reconstruction will use, which is the only reliable way to catch environments
+    that pass the static check but have a broken compiler, missing CUDA headers, an
+    incompatible Triton build, or an unusable backend option.
 
-    The smoke test compiles a 16x16 element function, so the cost is dominated by the
-    one-time backend warmup (a few seconds at most) and is cached per-process.
+    The smoke test compiles a 256 element function, so the cost is dominated by the
+    one-time backend warmup (a few seconds at most) and is cached per-process. It draws
+    no random numbers and restores any RNG state the backend consumes.
 
     Note:
         A hard crash (segfault) inside a broken backend cannot be caught here,
@@ -335,13 +393,30 @@ def smoke_test_jit_compile(
         device_str (str, optional): Target device, e.g. 'cpu', 'mps', or 'cuda:1'. The smoke test runs
             on the exact device given so it reflects the GPU used by the reconstruction.
             Defaults to 'cpu'.
-        backend (str, optional): The ``torch.compile`` backend. Defaults to 'inductor'.
-        fullgraph (bool, optional): Whether to require a graph break-free trace. Defaults to False.
-        dynamic (bool or None, optional): Dynamic shape handling. Defaults to None.
+        **compile_kwargs: The kwargs forwarded to ``torch.compile`` (backend, fullgraph, dynamic,
+            mode, options, ...). Any 'disable' entry is ignored, since a disabled compile would
+            make the smoke test vacuous.
 
     Returns:
         tuple[bool, str]: (works, reason) describing whether the smoke test compiled and ran cleanly.
     """
+    import torch
+
+    compile_kwargs.pop("disable", None)
+    cache_key = (device_str, _freeze(compile_kwargs))
+    if cache_key in _SMOKE_TEST_CACHE:
+        return _SMOKE_TEST_CACHE[cache_key]
+
+    result = _run_jit_smoke_test(device_str, compile_kwargs)
+    _SMOKE_TEST_CACHE[cache_key] = result
+    return result
+
+
+smoke_test_jit_compile.cache_clear = _SMOKE_TEST_CACHE.clear
+
+
+def _run_jit_smoke_test(device_str: str, compile_kwargs: dict) -> Tuple[bool, str]:
+    """Uncached body of `smoke_test_jit_compile`."""
     import torch
 
     try:
@@ -350,11 +425,12 @@ def smoke_test_jit_compile(
         return False, f"invalid device type '{device_str}' ({err})"
 
     try:
-        with warnings.catch_warnings():
+        with warnings.catch_warnings(), _preserved_rng_state(device):
             warnings.simplefilter("ignore")
 
-            x = torch.randn(16, 16, device=device, requires_grad=True)
-            compiled_fn = torch.compile(_jit_smoke_test_fn, backend=backend, fullgraph=fullgraph, dynamic=dynamic)
+            # A deterministic spread of values, so the smoke test consumes no RNG of its own
+            x = torch.linspace(-1.0, 1.0, 256, device=device).reshape(16, 16).requires_grad_(True)
+            compiled_fn = torch.compile(_jit_smoke_test_fn, **compile_kwargs)
             out = compiled_fn(x)
             out.backward()
             _sync_device(device)
@@ -365,7 +441,8 @@ def smoke_test_jit_compile(
 
     except Exception as err:
         # torch.compile failures surface as BackendCompilerFailed, Unsupported, ImportError, OSError, RuntimeError...
-        return False, f"torch.compile smoke test failed with {type(err).__name__}: {err}"
+        logger.debug(f"Full torch.compile smoke test error: {err}", exc_info=True)
+        return False, f"torch.compile smoke test failed with {type(err).__name__}: {_short(err)}"
     finally:
         # Leave no compiled state behind, the reconstruction loop resets and compiles its own graphs
         try:
@@ -373,15 +450,17 @@ def smoke_test_jit_compile(
         except Exception:
             pass
 
-    return True, f"torch.compile smoke test succeeded on device '{device_str}' with backend '{backend}'"
+    return True, (
+        f"torch.compile smoke test succeeded on device '{device_str}' with {compile_kwargs or 'default configs'}"
+    )
 
 
-def detect_jit_capability(device=None, backend: str = "inductor", fullgraph: bool = False,
-                          dynamic: Optional[bool] = None, run_smoke_test: bool = True) -> Tuple[bool, str]:
+def detect_jit_capability(device=None, compile_kwargs: Optional[dict] = None,
+                          run_smoke_test: bool = True) -> Tuple[bool, str]:
     """Detect whether JIT compilation is achievable on this machine.
 
     Runs the static environment check first and, if it passes, the functional
-    ``torch.compile`` smoke test.
+    ``torch.compile`` smoke test with the same kwargs the reconstruction will use.
 
     This answers the question behind ``'enable': 'auto'``, so on top of raw capability it
     also applies PtyRAD's opt-in policy: platforms in `AUTO_OPT_IN_SYSTEMS` are reported as
@@ -391,9 +470,9 @@ def detect_jit_capability(device=None, backend: str = "inductor", fullgraph: boo
     Args:
         device (torch.device or str or None, optional): Target device. None infers it
             from the available accelerators.
-        backend (str, optional): The ``torch.compile`` backend. Defaults to 'inductor'.
-        fullgraph (bool, optional): Whether to require a graph break-free trace. Defaults to False.
-        dynamic (bool or None, optional): Dynamic shape handling. Defaults to None.
+        compile_kwargs (dict or None, optional): The effective ``torch.compile`` kwargs
+            (backend, fullgraph, dynamic, mode, options, ...). Defaults to None, meaning
+            torch.compile defaults.
         run_smoke_test (bool, optional): Set to False to only run the cheap static check.
             Defaults to True.
 
@@ -403,16 +482,44 @@ def detect_jit_capability(device=None, backend: str = "inductor", fullgraph: boo
     if _system() in AUTO_OPT_IN_SYSTEMS:
         return False, AUTO_OPT_IN_REASON
 
+    compile_kwargs = dict(compile_kwargs or {})
     device_str = resolve_device(device)
 
-    supported, reason = check_jit_support(device_str, backend)
+    supported, reason = check_jit_support(device_str, compile_kwargs.get("backend") or "inductor")
     if not supported or not run_smoke_test:
         return supported, reason
 
-    return smoke_test_jit_compile(device_str, backend, fullgraph, dynamic)
+    return smoke_test_jit_compile(device_str, **compile_kwargs)
 
 
-def resolve_jit_enable(configs: Optional[dict], device=None, run_smoke_test: Optional[bool] = None) -> bool:
+def compile_kwargs_from_configs(configs: Optional[dict]) -> dict:
+    """Turn user-facing `compiler_configs` into the kwargs `torch.compile` actually accepts.
+
+    Drops the PtyRAD-only keys and resolves the one combination the params schema allows but
+    torch.compile rejects: passing both 'mode' and 'options' raises, so the more specific
+    'options' wins. Both the smoke test and the reconstruction compile with these kwargs, so
+    a bad option is caught by detection instead of at the first iteration.
+
+    Args:
+        configs (dict or None): The user-facing `compiler_configs` dict.
+
+    Returns:
+        dict: The effective `torch.compile` kwargs.
+    """
+    kwargs = {k: v for k, v in (configs or {}).items() if k not in PTYRAD_ONLY_CONFIG_KEYS}
+
+    if kwargs.get("options") is not None and kwargs.get("mode") is not None:
+        dropped = kwargs.pop("mode")
+        logger.info(
+            f"compiler_configs sets both 'mode' ({dropped!r}) and 'options', but torch.compile accepts "
+            "only one of them, so 'options' is used and 'mode' is ignored"
+        )
+
+    return kwargs
+
+
+def resolve_jit_enable(configs: Optional[dict], device=None, run_smoke_test: Optional[bool] = None,
+                       compile_kwargs: Optional[dict] = None) -> bool:
     """Resolve the user-facing ``compiler_configs['enable']`` flag into a concrete bool.
 
     The flag accepts:
@@ -430,6 +537,9 @@ def resolve_jit_enable(configs: Optional[dict], device=None, run_smoke_test: Opt
         run_smoke_test (bool or None, optional): Whether the 'auto' detection runs the functional
             smoke test on top of the static check. Defaults to None, which follows
             ``configs['auto_smoke_test']`` (itself defaulting to True).
+        compile_kwargs (dict or None, optional): Pre-computed effective ``torch.compile`` kwargs,
+            so a caller that already built them doesn't derive (and log about) them twice.
+            Defaults to None, which derives them from `configs`.
 
     Returns:
         bool: Whether ``torch.compile`` should be applied.
@@ -438,6 +548,8 @@ def resolve_jit_enable(configs: Optional[dict], device=None, run_smoke_test: Opt
     enable = configs.get("enable", "auto")
     if run_smoke_test is None:
         run_smoke_test = bool(configs.get("auto_smoke_test", True))
+    if compile_kwargs is None:
+        compile_kwargs = compile_kwargs_from_configs(configs)
 
     if isinstance(enable, str):
         enable = enable.strip().lower()
@@ -446,9 +558,7 @@ def resolve_jit_enable(configs: Optional[dict], device=None, run_smoke_test: Opt
         logger.info("JIT compilation is disabled ('enable': false), running in eager mode")
         return False
 
-    backend = configs.get("backend") or "inductor"
-    fullgraph = bool(configs.get("fullgraph", False))
-    dynamic = configs.get("dynamic")
+    backend = compile_kwargs.get("backend") or "inductor"
     device_str = resolve_device(device)
 
     if enable is True:
@@ -470,7 +580,7 @@ def resolve_jit_enable(configs: Optional[dict], device=None, run_smoke_test: Opt
 
     logger.info(f"### Auto-detecting JIT (torch.compile) capability on device '{device_str}' ###")
     achievable, reason = detect_jit_capability(
-        device=device, backend=backend, fullgraph=fullgraph, dynamic=dynamic, run_smoke_test=run_smoke_test
+        device=device, compile_kwargs=compile_kwargs, run_smoke_test=run_smoke_test
     )
 
     if achievable:

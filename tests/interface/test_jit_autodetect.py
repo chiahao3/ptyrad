@@ -54,8 +54,9 @@ def _patch_detection(monkeypatch, supported, smoke_test_ok=True, device_str="cpu
         calls["static"].append(device)
         return (supported, "static reason")
 
-    def fake_smoke_test(device="cpu", backend="inductor", fullgraph=False, dynamic=None):
+    def fake_smoke_test(device="cpu", **compile_kwargs):
         calls["smoke_test"].append(device)
+        calls.setdefault("smoke_kwargs", []).append(compile_kwargs)
         return (smoke_test_ok, "smoke test reason")
 
     monkeypatch.setattr(jit, "check_jit_support", fake_static)
@@ -104,7 +105,7 @@ def test_explicit_true_is_respected_even_when_unsupported(monkeypatch):
 def test_explicit_false_skips_detection_entirely(monkeypatch):
     calls = _patch_detection(monkeypatch, supported=True)
     assert jit.resolve_jit_enable({"enable": False}) is False
-    assert calls == {"static": [], "smoke_test": []}
+    assert calls["static"] == [] and calls["smoke_test"] == []
 
 
 def test_missing_or_empty_configs_default_to_auto(monkeypatch):
@@ -117,6 +118,77 @@ def test_unrecognized_enable_is_treated_as_auto(monkeypatch):
     """Params loaded with validate=False bypass pydantic, so be forgiving at runtime."""
     _patch_detection(monkeypatch, supported=False)
     assert jit.resolve_jit_enable({"enable": "yes-please"}) is False
+
+
+# --------------------------------------------------------------------------------------
+# Effective torch.compile kwargs
+# --------------------------------------------------------------------------------------
+
+def test_compile_kwargs_drop_ptyrad_only_keys():
+    kwargs = jit.compile_kwargs_from_configs(CompilerConfigs().model_dump())
+    assert "enable" not in kwargs and "auto_smoke_test" not in kwargs
+    assert kwargs["backend"] == "inductor" and kwargs["mode"] == "default"
+
+
+def test_compile_kwargs_drop_mode_when_options_are_set():
+    """torch.compile raises when given both, and the schema lets users set both."""
+    configs = CompilerConfigs(options={"max_autotune": True}).model_dump()
+    kwargs = jit.compile_kwargs_from_configs(configs)
+    assert "mode" not in kwargs
+    assert kwargs["options"] == {"max_autotune": True}
+
+
+def test_the_resulting_kwargs_are_accepted_by_torch_compile():
+    import torch
+
+    for configs in (CompilerConfigs(), CompilerConfigs(options={"max_autotune": False})):
+        kwargs = jit.compile_kwargs_from_configs(configs.model_dump())
+        torch.compile(lambda x: x + 1, disable=True, **kwargs)  # Must not raise
+
+
+def test_smoke_test_receives_the_same_kwargs_as_the_reconstruction(monkeypatch):
+    """A bad 'mode'/'options' must fail detection, not the first reconstruction iteration."""
+    calls = _patch_detection(monkeypatch, supported=True, smoke_test_ok=True)
+    configs = CompilerConfigs(mode="max-autotune").model_dump()
+
+    assert jit.resolve_jit_enable(configs) is True
+    assert calls["smoke_kwargs"] == [jit.compile_kwargs_from_configs(configs)]
+
+
+def test_smoke_test_ignores_a_stray_disable_flag():
+    """A disabled compile would make the smoke test vacuously succeed."""
+    works, reason = jit.smoke_test_jit_compile("not-a-device", disable=True)
+    assert works is False and "invalid device type" in reason
+
+
+def test_smoke_test_caches_per_device_and_kwargs(monkeypatch):
+    runs = []
+
+    def fake_run(device_str, compile_kwargs):
+        runs.append((device_str, dict(compile_kwargs)))
+        return (True, "ok")
+
+    monkeypatch.setattr(jit, "_run_jit_smoke_test", fake_run)
+
+    jit.smoke_test_jit_compile("cpu", backend="inductor")
+    jit.smoke_test_jit_compile("cpu", backend="inductor")  # Cached
+    jit.smoke_test_jit_compile("cpu", backend="inductor", options={"a": 1})
+    jit.smoke_test_jit_compile("cuda:0", backend="inductor")
+    assert len(runs) == 3
+
+
+def test_smoke_test_leaves_the_rng_state_untouched():
+    """Detection must not shift the RNG stream that the reconstruction samples from."""
+    import torch
+
+    torch.manual_seed(1234)
+    before = torch.get_rng_state()
+    jit.smoke_test_jit_compile.cache_clear()
+    # The 'eager' backend exercises the same trace/forward/backward path without paying for
+    # inductor codegen, which would add tens of seconds to the suite on a cold cache
+    works, reason = jit.smoke_test_jit_compile("cpu", backend="eager")
+    assert works is True, reason
+    assert torch.equal(torch.get_rng_state(), before)
 
 
 # --------------------------------------------------------------------------------------
@@ -134,7 +206,7 @@ def test_auto_stays_eager_on_macos(monkeypatch):
     _pretend_macos(monkeypatch)
 
     assert jit.resolve_jit_enable({"enable": "auto"}) is False
-    assert calls == {"static": [], "smoke_test": []}  # Policy decides before any detection work
+    assert calls["static"] == [] and calls["smoke_test"] == []  # Policy decides before any work
 
 
 def test_detect_jit_capability_reports_the_macos_policy(monkeypatch):
@@ -298,7 +370,9 @@ def test_smoke_test_reports_failure_on_invalid_device():
 def test_parse_torch_compile_configs_strips_ptyrad_only_keys(monkeypatch):
     from ptyrad.solver import reconstruction
 
-    monkeypatch.setattr(reconstruction, "resolve_jit_enable", lambda configs, device=None: True)
+    monkeypatch.setattr(
+        reconstruction, "resolve_jit_enable", lambda configs, device=None, compile_kwargs=None: True
+    )
     user_configs = CompilerConfigs().model_dump()
     parsed = reconstruction.parse_torch_compile_configs(user_configs, device="cpu")
 
@@ -312,6 +386,8 @@ def test_parse_torch_compile_configs_strips_ptyrad_only_keys(monkeypatch):
 def test_parse_torch_compile_configs_disables_on_fallback(monkeypatch):
     from ptyrad.solver import reconstruction
 
-    monkeypatch.setattr(reconstruction, "resolve_jit_enable", lambda configs, device=None: False)
+    monkeypatch.setattr(
+        reconstruction, "resolve_jit_enable", lambda configs, device=None, compile_kwargs=None: False
+    )
     parsed = reconstruction.parse_torch_compile_configs(CompilerConfigs().model_dump(), device="cpu")
     assert parsed["disable"] is True

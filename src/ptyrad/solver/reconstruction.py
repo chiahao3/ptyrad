@@ -15,7 +15,7 @@ from ptyrad.params.parser import copy_params_to_dir
 from ptyrad.plotting.basic import plot_pos_grouping
 from ptyrad.plotting.model import plot_summary
 from ptyrad.runtime.convergence import create_convergence_monitor
-from ptyrad.runtime.jit import resolve_jit_enable
+from ptyrad.runtime.jit import compile_kwargs_from_configs, resolve_jit_enable
 from ptyrad.runtime.seed import set_random_seed
 from ptyrad.solver.grouping import (
     remap_batches_to_global,
@@ -793,13 +793,14 @@ def parse_torch_compile_configs(configs, device=None):
             used for the JIT capability detection. None infers it from available accelerators.
 
     Returns:
-        dict: A copy of `configs` with 'enable' replaced by the resolved 'disable' flag.
+        dict: The `torch.compile` kwargs, i.e. `configs` without the PtyRAD-only keys and
+            with the resolved 'disable' flag.
     """
-    configs = dict(configs or {}) # Copy so the user-facing params dict is not mutated
-    configs['disable'] = not resolve_jit_enable(configs, device=device)
-    for key in ('enable', 'auto_smoke_test'): # PtyRAD-only keys that torch.compile doesn't take
-        configs.pop(key, None)
-    return configs
+    # The compile kwargs are built first so that detection compiles with the exact same
+    # options as the reconstruction, and a bad option falls back instead of raising at iter 1
+    compile_kwargs = compile_kwargs_from_configs(configs)
+    compile_kwargs['disable'] = not resolve_jit_enable(configs, device=device, compile_kwargs=compile_kwargs)
+    return compile_kwargs
 
 def toggle_grad_requires(model, niter):
     """Toggle requires_grad based on start and end iteration for each optimizable tensor."""
