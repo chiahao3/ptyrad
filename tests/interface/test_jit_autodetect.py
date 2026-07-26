@@ -143,15 +143,23 @@ def test_check_jit_support_rejects_old_pytorch(monkeypatch):
     assert "torch.compile" in reason
 
 
-def test_check_jit_support_requires_triton_on_cuda(monkeypatch):
-    monkeypatch.setattr(jit, "_has_triton", lambda: False)
+def _pretend_cuda_is_available(monkeypatch):
+    import torch
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+
+
+def test_check_jit_support_requires_the_triton_package_on_cuda(monkeypatch):
+    _pretend_cuda_is_available(monkeypatch)
+    monkeypatch.setattr(jit, "_has_triton_package", lambda: False)
     supported, reason = jit.check_jit_support("cuda")
     assert supported is False
-    assert "Triton" in reason
+    assert "triton" in reason
 
 
 def test_check_jit_support_rejects_old_cuda_capability(monkeypatch):
-    monkeypatch.setattr(jit, "_has_triton", lambda: True)
+    _pretend_cuda_is_available(monkeypatch)
+    monkeypatch.setattr(jit, "_has_triton_package", lambda: True)
     monkeypatch.setattr(jit, "_cuda_capability", lambda device_str: (6, 1))
     supported, reason = jit.check_jit_support("cuda")
     assert supported is False
@@ -159,22 +167,51 @@ def test_check_jit_support_rejects_old_cuda_capability(monkeypatch):
 
 
 def test_check_jit_support_accepts_modern_cuda(monkeypatch):
-    monkeypatch.setattr(jit, "_has_triton", lambda: True)
+    _pretend_cuda_is_available(monkeypatch)
+    monkeypatch.setattr(jit, "_has_triton_package", lambda: True)
     monkeypatch.setattr(jit, "_cuda_capability", lambda device_str: (8, 6))
     supported, _ = jit.check_jit_support("cuda")
     assert supported is True
 
 
+def test_check_jit_support_rejects_cuda_when_no_gpu_is_available(monkeypatch):
+    import torch
+
+    monkeypatch.setattr(jit, "_has_triton_package", lambda: True)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    supported, reason = jit.check_jit_support("cuda:0")
+    assert supported is False
+    assert "no available CUDA device" in reason
+
+
 def test_check_jit_support_reads_capability_of_the_selected_gpu(monkeypatch):
     """A weak GPU elsewhere on the host must not veto JIT on the GPU actually selected."""
     capabilities = {0: (6, 1), 1: (8, 6)}
-    monkeypatch.setattr(jit, "_has_triton", lambda: True)
+    _pretend_cuda_is_available(monkeypatch)
+    monkeypatch.setattr(jit, "_has_triton_package", lambda: True)
     monkeypatch.setattr(
         jit, "_cuda_capability", lambda device_str: capabilities[int(device_str.split(":")[1])]
     )
 
     assert jit.check_jit_support("cuda:1")[0] is True
     assert jit.check_jit_support("cuda:0")[0] is False
+
+
+def test_triton_check_is_independent_of_the_current_cuda_device(monkeypatch):
+    """torch.utils._triton.has_triton() answers for the current GPU, so it must not be used here.
+
+    Selecting cuda:1 on a host whose current device is an older cuda:0 must still enable JIT.
+    """
+    import torch.utils._triton as torch_triton
+
+    _pretend_cuda_is_available(monkeypatch)
+    monkeypatch.setattr(torch_triton, "has_triton_package", lambda: True)
+    monkeypatch.setattr(
+        torch_triton, "has_triton", lambda: pytest.fail("has_triton() is current-device dependent")
+    )
+    monkeypatch.setattr(jit, "_cuda_capability", lambda device_str: (8, 6))
+
+    assert jit.check_jit_support("cuda:1")[0] is True
 
 
 def test_check_jit_support_rejects_mps_on_old_pytorch(monkeypatch):

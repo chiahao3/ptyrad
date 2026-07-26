@@ -102,13 +102,20 @@ def resolve_device(device=None) -> str:
     return str(dev)
 
 
-def _has_triton() -> bool:
-    """Check whether a usable Triton installation is present."""
-    try:
-        # Available since PyTorch 2.2, this also validates the device backend, not just the import
-        from torch.utils._triton import has_triton
+def _has_triton_package() -> bool:
+    """Check whether the Triton package is installed.
 
-        return bool(has_triton())
+    Note:
+        This deliberately checks package availability only, not device compatibility.
+        `torch.utils._triton.has_triton()` would also validate the device, but it inspects
+        the *current* CUDA device rather than a given one (and caches its verdict), so on a
+        heterogeneous host it answers for the wrong GPU. The per-device part is covered by
+        `_cuda_capability()` and, ultimately, by the smoke test on the selected device.
+    """
+    try:
+        from torch.utils._triton import has_triton_package
+
+        return bool(has_triton_package())
     except Exception:
         # Fall back to a plain import check on older PyTorch
         try:
@@ -202,16 +209,24 @@ def check_jit_support(device_str: str = "cpu", backend: str = "inductor") -> Tup
             pass
 
         if device_type in TRITON_DEVICE_TYPES:
-            if not _has_triton():
+            if not _has_triton_package():
                 hint = f" {TRITON_WINDOWS_HINT}" if system == "Windows" else ""
-                return False, f"Triton is not available for the '{device_type}' TorchInductor backend.{hint}"
-
-            capability = _cuda_capability(device_str)
-            if capability is not None and capability < MIN_CUDA_CAPABILITY:
                 return False, (
-                    f"CUDA compute capability {capability[0]}.{capability[1]} of device '{device_str}' "
-                    f"is below the {MIN_CUDA_CAPABILITY[0]}.{MIN_CUDA_CAPABILITY[1]} required by Triton"
+                    f"The `triton` package needed by the '{device_type}' TorchInductor backend is not installed.{hint}"
                 )
+
+            if device_type == "cuda":
+                if not torch.cuda.is_available():
+                    return False, f"PyTorch reports no available CUDA device for '{device_str}'"
+
+                # Read the capability of the selected GPU only, so an older GPU elsewhere
+                # on a heterogeneous host doesn't veto JIT on the one actually in use
+                capability = _cuda_capability(device_str)
+                if capability is not None and capability < MIN_CUDA_CAPABILITY:
+                    return False, (
+                        f"CUDA compute capability {capability[0]}.{capability[1]} of device '{device_str}' "
+                        f"is below the {MIN_CUDA_CAPABILITY[0]}.{MIN_CUDA_CAPABILITY[1]} required by Triton"
+                    )
 
         elif device_type == "mps":
             if version < MIN_TORCH_VERSION_MPS:
