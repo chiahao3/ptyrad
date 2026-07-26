@@ -10,6 +10,26 @@ from pydantic import BaseModel, Field, model_validator
 
 # 2025.08.10 CHL: 'freq' is deprecated since PtyRAD v0.1.0b11 and it might be removed at stable release of 0.1.0.
 
+def _validate_linear_decay(start_val, end_val, start_iter, end_iter, param_name):
+    """Shared cross-field validation for a linear-decay parameter pair (e.g. std or beta).
+
+    Enforces: both start/end must be set together, start_iter/end_iter must be set with
+    end_iter > start_iter, and end_val <= start_val since these decay schedules only
+    support decaying (or holding) the value, not increasing it.
+    """
+    if (start_val is None) != (end_val is None):
+        raise ValueError(f"'start_{param_name}' and 'end_{param_name}' must be set together to enable linear decay; leave both as null to use the static '{param_name}' value instead.")
+    if start_val is not None:
+        if start_iter is None:
+            raise ValueError(f"'start_iter' must be set (not null) when using 'start_{param_name}'/'end_{param_name}' decay.")
+        if end_iter is None:
+            raise ValueError(f"'end_iter' must be set (not null) when using 'start_{param_name}'/'end_{param_name}' decay, since the decay is interpolated over the ['start_iter', 'end_iter'] window (inclusive of both ends).")
+        if end_iter <= start_iter:
+            raise ValueError(f"'end_iter' must be greater than 'start_iter' when using 'start_{param_name}'/'end_{param_name}' decay.")
+        if end_val > start_val:
+            raise ValueError(f"'end_{param_name}' must be <= 'start_{param_name}'; decay only supports decaying (or holding) the {param_name}, not increasing it.")
+
+
 class OrthoPmode(BaseModel):
     model_config = {"extra": "forbid"}
     
@@ -67,29 +87,26 @@ class ObjRblur(BaseModel):
 
     @model_validator(mode="after")
     def validate_std_decay(self):
-        if (self.start_std is None) != (self.end_std is None):
-            raise ValueError("'start_std' and 'end_std' must be set together to enable linear std decay; leave both as null to use the static 'std' value instead.")
-        if self.start_std is not None:
-            if self.start_iter is None:
-                raise ValueError("'start_iter' must be set (not null) when using 'start_std'/'end_std' decay.")
-            if self.end_iter is None:
-                raise ValueError("'end_iter' must be set (not null) when using 'start_std'/'end_std' decay, since the decay is interpolated over the ['start_iter', 'end_iter'] window (inclusive of both ends).")
-            if self.end_iter <= self.start_iter:
-                raise ValueError("'end_iter' must be greater than 'start_iter' when using 'start_std'/'end_std' decay.")
-            if self.end_std > self.start_std:
-                raise ValueError("'end_std' must be <= 'start_std'; obj_rblur decay only supports decaying (or holding) the blur strength, not increasing it.")
+        _validate_linear_decay(self.start_std, self.end_std, self.start_iter, self.end_iter, "std")
         return self
 
 
 class ObjZblur(BaseModel):
     model_config = {"extra": "forbid"}
-    
+
     start_iter: Optional[int] = Field(default=1, ge=1, description="Start iteration of applying z-direction Gaussian blur")
     step: Optional[int] = Field(default=1, ge=1, description="Interval of iterations of applying z-direction Gaussian blur")
     end_iter: Optional[int] = Field(default=None, ge=1, description="End iteration of applying z-direction Gaussian blur")
     obj_type: Literal["amplitude", "phase", "both"] = Field(default="both", description="Object type for blur")
     kernel_size: int = Field(default=5, ge=1, description="Kernel size for Gaussian blur (odd, >6*std+1)")
     std: float = Field(default=1.0, ge=0.0, description="Standard deviation for Gaussian blur")
+    start_std: Optional[float] = Field(default=None, ge=0.0, description="Starting standard deviation for linear std decay (frequency marching); must be set together with `end_std` and requires `start_iter`/`end_iter` to be set")
+    end_std: Optional[float] = Field(default=None, ge=0.0, description="Ending standard deviation for linear std decay (frequency marching), reached exactly (inclusive) at `end_iter`; must be set together with `start_std` and requires `start_iter`/`end_iter` to be set; must be <= `start_std`")
+
+    @model_validator(mode="after")
+    def validate_std_decay(self):
+        _validate_linear_decay(self.start_std, self.end_std, self.start_iter, self.end_iter, "std")
+        return self
 
 
 class KrFilter(BaseModel):
@@ -112,6 +129,13 @@ class KzFilter(BaseModel):
     obj_type: Literal["amplitude", "phase", "both"] = Field(default="both", description="Object type for filter")
     beta: float = Field(default=1.0, ge=0.0, description="Strength of arctan function")
     alpha: float = Field(default=1.0, ge=0.0, description="Lateral Fourier filtering constant")
+    start_beta: Optional[float] = Field(default=None, ge=0.0, description="Starting beta for linear decay (frequency marching); must be set together with `end_beta` and requires `start_iter`/`end_iter` to be set")
+    end_beta: Optional[float] = Field(default=None, ge=0.0, description="Ending beta for linear decay (frequency marching), reached exactly (inclusive) at `end_iter`; must be set together with `start_beta` and requires `start_iter`/`end_iter` to be set; must be <= `start_beta`")
+
+    @model_validator(mode="after")
+    def validate_beta_decay(self):
+        _validate_linear_decay(self.start_beta, self.end_beta, self.start_iter, self.end_iter, "beta")
+        return self
 
 
 class KrThresh(BaseModel):
@@ -291,10 +315,14 @@ class ConstraintParams(BaseModel):
     Apply a "z-direction" 1D Gaussian blur to the object. 
     This is a real-space alternative to the typical kz_filter 
     (or so called missing-wedge regularization that applies Fourier filtering to the object) designed for multislice ptychography. 
-    Similar to 'obj_rblur', 'obj_type' can be either 'amplitude', 'phase', or 'both' with a specified 'std' and 'kernel_size' in unit of real-space px. 
-    Note that the 'ptycho/engines/GPU_MS/private/regulation_multilayers.m' from PtychoShelves (fold_slice) 
-    is a combination of 'obja_thresh', 'kr_filter', and 'kz_filter', 
-    so you may want to activate all these constraints altogether in PtyRAD to get the most similar effect 
+    Similar to 'obj_rblur', 'obj_type' can be either 'amplitude', 'phase', or 'both' with a specified 'std' and 'kernel_size' in unit of real-space px.
+    Note that the 'ptycho/engines/GPU_MS/private/regulation_multilayers.m' from PtychoShelves (fold_slice)
+    is a combination of 'obja_thresh', 'kr_filter', and 'kz_filter',
+    so you may want to activate all these constraints altogether in PtyRAD to get the most similar effect
+    Just like 'obj_rblur', you can alternatively set 'start_std' and 'end_std' together (this requires 'start_iter' and
+    'end_iter' to also be set, with 'end_iter' > 'start_iter', and 'end_std' <= 'start_std' since this only decays/holds
+    the blur, not increasing it) to linearly decay the blur strength from 'start_std' down to 'end_std' across the
+    ['start_iter', 'end_iter'] window (both endpoints inclusive) instead of using a static 'std', for frequency marching.
     """
     
     kr_filter: KrFilter = Field(
@@ -322,8 +350,12 @@ class ConstraintParams(BaseModel):
     While this 'kz_filter' works very well for most multislice reconstructions of crystals, 
     you might prefer 'obj_zblur' if you have an object that has distinct top and bottom layer like twisted bilayer or tilted systems,
     because 'kz_filter' would introduce intermixing between the top and bottom layer due to the periodic boundary condition of Fourier transform. 
-    Another solution to the intermixing is to pad vacuum layers to your object and remove them later, 
+    Another solution to the intermixing is to pad vacuum layers to your object and remove them later,
     although padding extensive vacuum layers tend to make object phase bleed into the vacuum layers and it's very hard to set the interface
+    Alternatively, set 'start_beta' and 'end_beta' together (this requires 'start_iter' and 'end_iter' to also be set,
+    with 'end_iter' > 'start_iter', and 'end_beta' <= 'start_beta' since this only decays/holds the regularization
+    strength, not increasing it) to linearly decay 'beta' from 'start_beta' down to 'end_beta' across the
+    ['start_iter', 'end_iter'] window (both endpoints inclusive) instead of using a static 'beta', for frequency marching.
     """
     
     kr_thresh: KrThresh = Field(default_factory=KrThresh, description="kr threshold for object")

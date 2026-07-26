@@ -207,10 +207,23 @@ class CombinedConstraint(torch.nn.Module):
     def apply_obj_zblur(self, model, niter):
         ''' Apply Gaussian blur to object along the z-axis (slice dimension) '''
 
-        if self._should_apply_at_iter('obj_zblur', niter) and self.constraint_params['obj_zblur']['std'] !=0:
+        # Use `.get()` for the decay keys so legacy dicts that predate `start_std`/`end_std`
+        # (e.g. hand-built configs or configs loaded with validation skipped) don't KeyError
+        start_std = self.constraint_params['obj_zblur'].get('start_std')
+        end_std   = self.constraint_params['obj_zblur'].get('end_std')
+        is_decay  = start_std is not None and end_std is not None
+
+        if self._should_apply_at_iter('obj_zblur', niter, inclusive_end=is_decay):
             obj_type       = self.constraint_params['obj_zblur']['obj_type']
             obj_zblur_ks   = self.constraint_params['obj_zblur']['kernel_size']
-            obj_zblur_std  = self.constraint_params['obj_zblur']['std']
+
+            if is_decay:
+                obj_zblur_std = self._linear_decay('obj_zblur', niter, start_std, end_std)
+            else:
+                obj_zblur_std = self.constraint_params['obj_zblur']['std']
+
+            if obj_zblur_std == 0:
+                return
 
             if obj_type in ['amplitude', 'both']:
                 model.opt_obja.copy_(gaussian_blur_1d(model.opt_obja, kernel_size=obj_zblur_ks, sigma=obj_zblur_std))
@@ -240,11 +253,21 @@ class CombinedConstraint(torch.nn.Module):
         ''' Apply kz Fourier filter constraint on object '''
         # Note that the `kz_filter`` behaves differently for 'amplitude' and 'phase', see `kz_filter` implementaion for details
 
-        if self._should_apply_at_iter('kz_filter', niter):
+        # Use `.get()` for the decay keys so legacy dicts that predate `start_beta`/`end_beta`
+        # (e.g. hand-built configs or configs loaded with validation skipped) don't KeyError
+        start_beta = self.constraint_params['kz_filter'].get('start_beta')
+        end_beta   = self.constraint_params['kz_filter'].get('end_beta')
+        is_decay   = start_beta is not None and end_beta is not None
+
+        if self._should_apply_at_iter('kz_filter', niter, inclusive_end=is_decay):
             obj_type               = self.constraint_params['kz_filter']['obj_type']
-            beta_regularize_layers = self.constraint_params['kz_filter']['beta']
             alpha_gaussian         = self.constraint_params['kz_filter']['alpha']
-            
+
+            if is_decay:
+                beta_regularize_layers = self._linear_decay('kz_filter', niter, start_beta, end_beta)
+            else:
+                beta_regularize_layers = self.constraint_params['kz_filter']['beta']
+
             if obj_type in ['amplitude', 'both']:
                 model.opt_obja.copy_(kz_filter(model.opt_obja, beta_regularize_layers, alpha_gaussian, obj_type='amplitude'))
                 logger.debug(f"Apply kz_filter constraint with beta = {beta_regularize_layers} on obja at iter {niter}")

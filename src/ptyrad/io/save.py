@@ -483,8 +483,15 @@ def make_output_folder(
         if constraint_params["kz_filter"]["start_iter"] is not None:
             obj_type = constraint_params["kz_filter"]["obj_type"]
             kz_str = {"both": "kz", "amplitude": "kza", "phase": "kzp"}.get(obj_type)
-            beta = constraint_params["kz_filter"]["beta"]
-            parts.append(f"{kz_str}f{beta}")
+            # `.get()` since legacy dicts (e.g. hand-built configs or configs loaded with
+            # validation skipped) may predate the 'start_beta'/'end_beta' keys entirely
+            start_beta = constraint_params["kz_filter"].get("start_beta")
+            end_beta = constraint_params["kz_filter"].get("end_beta")
+            if start_beta is not None and end_beta is not None:
+                parts.append(f"{kz_str}f{start_beta}-{end_beta}")
+            else:
+                beta = constraint_params["kz_filter"]["beta"]
+                parts.append(f"{kz_str}f{beta}")
 
         if constraint_params["kr_thresh"]["start_iter"] is not None:
             obj_type = constraint_params["kr_thresh"]["obj_type"]
@@ -507,13 +514,20 @@ def make_output_folder(
                 obj_str = {"both": "o", "amplitude": "oa", "phase": "op"}.get(obj_type)
                 parts.append(f"{obj_str}rblur{constraint_params['obj_rblur']['std']}")
 
-        if (
-            constraint_params["obj_zblur"]["start_iter"] is not None
-            and constraint_params["obj_zblur"]["std"] != 0
-        ):
-            obj_type = constraint_params["obj_zblur"]["obj_type"]
-            obj_str = {"both": "o", "amplitude": "oa", "phase": "op"}.get(obj_type)
-            parts.append(f"{obj_str}zblur{constraint_params['obj_zblur']['std']}")
+        if constraint_params["obj_zblur"]["start_iter"] is not None:
+            # `.get()` since legacy dicts (e.g. hand-built configs or configs loaded with
+            # validation skipped) may predate the 'start_std'/'end_std' keys entirely
+            start_std = constraint_params["obj_zblur"].get("start_std")
+            end_std = constraint_params["obj_zblur"].get("end_std")
+            if start_std is not None and end_std is not None:
+                if start_std != 0 or end_std != 0:
+                    obj_type = constraint_params["obj_zblur"]["obj_type"]
+                    obj_str = {"both": "o", "amplitude": "oa", "phase": "op"}.get(obj_type)
+                    parts.append(f"{obj_str}zblur{start_std}-{end_std}")
+            elif constraint_params["obj_zblur"]["std"] != 0:
+                obj_type = constraint_params["obj_zblur"]["obj_type"]
+                obj_str = {"both": "o", "amplitude": "oa", "phase": "op"}.get(obj_type)
+                parts.append(f"{obj_str}zblur{constraint_params['obj_zblur']['std']}")
 
         if constraint_params["complex_ratio"]["start_iter"] is not None:
             obj_type = constraint_params["complex_ratio"]["obj_type"]
