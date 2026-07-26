@@ -20,6 +20,19 @@ Detection is done in two stages:
 
 Both stages are cached per-process, so repeated calls (e.g. one per Optuna
 trial during hypertune) pay the cost only once.
+
+On top of raw capability, 'auto' also applies an opt-in policy: macOS keeps
+JIT off by default because Triton / TorchInductor has been less stable there
+(see `AUTO_OPT_IN_SYSTEMS`), so Mac users enable it deliberately with
+``{'enable': true}``.
+
+Every PyTorch API used here exists in PyTorch 2.4, PtyRAD's declared minimum,
+so this module needs no version bump. The private ones
+(`torch._dynamo.is_dynamo_supported`, `torch._dynamo.is_inductor_supported`,
+`torch.utils._triton.has_triton_package`) are additionally wrapped so that a
+build without them degrades to the smoke test instead of raising. Note that
+PyTorch < 2.7 reports TorchInductor as unsupported on Windows, in which case
+'auto' correctly stays in eager mode there.
 """
 
 from __future__ import annotations
@@ -35,7 +48,8 @@ from typing import Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-# torch.compile was introduced in PyTorch 2.0
+# torch.compile was introduced in PyTorch 2.0. This is only the floor for a usable
+# torch.compile, PtyRAD's install requirement (torch>=2.4) is stricter anyway.
 MIN_TORCH_VERSION = (2, 0)
 
 # Triton (the GPU backend used by TorchInductor) requires CUDA compute capability >= 7.0 (Volta)
@@ -48,10 +62,40 @@ MIN_TORCH_VERSION_MPS = (2, 7)
 # Device types whose TorchInductor codegen path goes through Triton
 TRITON_DEVICE_TYPES = ("cuda", "xpu", "hpu")
 
+# Platforms where JIT is capable but not trusted enough to switch on by itself.
+# Triton / TorchInductor on macOS has been less stable than on Linux and Windows, including
+# reports of silently incorrect numerics, and a wrong reconstruction is far worse than a slow
+# one. So 'auto' stays in eager mode on macOS and users opt in with an explicit 'enable': true.
+AUTO_OPT_IN_SYSTEMS = ("Darwin",)
+
+MACOS_JIT_CAVEAT = (
+    "Triton / TorchInductor has been less stable on macOS than on Linux and Windows, "
+    "occasionally producing incorrect numerical results rather than failing outright."
+)
+
+AUTO_OPT_IN_REASON = (
+    f"JIT is not enabled automatically on macOS. {MACOS_JIT_CAVEAT} "
+    "Set 'enable': true to opt in explicitly."
+)
+
+OPT_IN_ACCEPTED_WARNING = (
+    f"JIT is explicitly enabled on macOS. {MACOS_JIT_CAVEAT} "
+    "Please sanity-check this reconstruction against an eager run ('enable': false)."
+)
+
 TRITON_WINDOWS_HINT = (
     "Triton does not officially support Windows. "
     "Install `triton-windows` (https://github.com/woct0rdho/triton-windows) to enable JIT on Windows."
 )
+
+
+def _system() -> str:
+    """Return the OS name ('Linux', 'Darwin', 'Windows').
+
+    Wrapped in a helper so tests can simulate another OS without patching `platform.system`
+    itself, which PyTorch also calls while importing (patching it globally breaks that import).
+    """
+    return platform.system()
 
 
 def _torch_version() -> Tuple[int, int]:
@@ -126,7 +170,7 @@ def _has_triton_package() -> bool:
 
 def _has_cxx_compiler() -> bool:
     """Check whether a C++ compiler is on PATH (needed by TorchInductor's CPU backend)."""
-    if platform.system() == "Windows":
+    if _system() == "Windows":
         candidates = ("cl", "clang-cl", "g++")
     else:
         candidates = (os.environ.get("CXX"), os.environ.get("CC"), "g++", "clang++", "c++", "gcc")
@@ -175,7 +219,7 @@ def check_jit_support(device_str: str = "cpu", backend: str = "inductor") -> Tup
     except ImportError:
         return False, "PyTorch is not importable"
 
-    system = platform.system()
+    system = _system()
     device_type = torch.device(device_str).type
 
     # (1) torch.compile must exist at all
@@ -339,6 +383,11 @@ def detect_jit_capability(device=None, backend: str = "inductor", fullgraph: boo
     Runs the static environment check first and, if it passes, the functional
     ``torch.compile`` smoke test.
 
+    This answers the question behind ``'enable': 'auto'``, so on top of raw capability it
+    also applies PtyRAD's opt-in policy: platforms in `AUTO_OPT_IN_SYSTEMS` are reported as
+    not achievable even when they could compile. Use `check_jit_support` instead for the
+    pure capability verdict.
+
     Args:
         device (torch.device or str or None, optional): Target device. None infers it
             from the available accelerators.
@@ -351,6 +400,9 @@ def detect_jit_capability(device=None, backend: str = "inductor", fullgraph: boo
     Returns:
         tuple[bool, str]: (achievable, reason).
     """
+    if _system() in AUTO_OPT_IN_SYSTEMS:
+        return False, AUTO_OPT_IN_REASON
+
     device_str = resolve_device(device)
 
     supported, reason = check_jit_support(device_str, backend)
@@ -366,7 +418,8 @@ def resolve_jit_enable(configs: Optional[dict], device=None, run_smoke_test: Opt
     The flag accepts:
 
     * ``'auto'`` (default): detect JIT capability on this machine and gracefully
-      fall back to eager mode when it is not achievable.
+      fall back to eager mode when it is not achievable, or when the platform is
+      opt-in only (macOS, see `AUTO_OPT_IN_SYSTEMS`).
     * ``True``: force JIT on. The capability check still runs so the user gets a
       warning that explains the upcoming failure, but the request is respected.
     * ``False``: never compile, no detection is performed.
@@ -407,6 +460,9 @@ def resolve_jit_enable(configs: Optional[dict], device=None, run_smoke_test: Opt
             logger.warning("         Set 'enable': 'auto' to let PtyRAD fall back to eager mode automatically.")
         else:
             logger.info(f"JIT compilation is explicitly enabled ('enable': true) on device '{device_str}'")
+
+        if _system() in AUTO_OPT_IN_SYSTEMS:
+            logger.warning(f"WARNING: {OPT_IN_ACCEPTED_WARNING}")
         return True
 
     if enable != "auto":

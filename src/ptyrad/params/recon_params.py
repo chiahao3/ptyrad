@@ -65,9 +65,11 @@ class CompilerConfigs(BaseModel):
     - 'auto' (default): PtyRAD detects whether JIT compilation is achievable on this machine right
       before the reconstruction loop starts (OS, PyTorch version, accelerator, GPU compute capability,
       Triton / C++ compiler availability, plus a functional compile smoke test). JIT is used when the check
-      passes, otherwise PtyRAD gracefully falls back to eager mode.
-    - true: always compile. The capability check still runs and warns if the machine looks unsupported,
-      but the request is respected so failures surface instead of being silently skipped.
+      passes, otherwise PtyRAD gracefully falls back to eager mode. macOS is deliberately excluded from
+      'auto' because Triton / TorchInductor has been less stable there and can occasionally return
+      incorrect numerics, so Mac users opt in with 'enable': true.
+    - true: always compile, including on macOS. The capability check still runs and warns if the machine
+      looks unsupported, but the request is respected so failures surface instead of being silently skipped.
     - false: never compile.
     """
 
@@ -416,8 +418,9 @@ class ReconParams(BaseModel):
     See https://docs.pytorch.org/docs/stable/generated/torch.compile.html for more details.
 
     Generally, for torch.compile with Triton, you'll need CUDA GPU with Compute Capability >= 7.0.
-    Linux and macOS should support the PyTorch JIT compiler out-of-the-box.
     For Windows users, please follow the instruction and download `triton-windows` from https://github.com/woct0rdho/triton-windows.
+    macOS can run the JIT compiler but is excluded from 'auto' since Triton is less stable there, set
+    {'enable': true} to opt in.
     """
 
     convergence_monitor: Optional[ConvergenceMonitorParams] = Field(default_factory=ConvergenceMonitorParams)

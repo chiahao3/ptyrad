@@ -185,7 +185,13 @@ def print_jit_info():
 
     report("### JIT compiler information ###")
     try:
-        from ptyrad.runtime.jit import check_jit_support, resolve_device
+        from ptyrad.runtime.jit import (
+            AUTO_OPT_IN_REASON,
+            AUTO_OPT_IN_SYSTEMS,
+            _system,
+            check_jit_support,
+            resolve_device,
+        )
 
         device_str = resolve_device()
         supported, reason = check_jit_support(device_str)
@@ -194,6 +200,8 @@ def print_jit_info():
         report(f"  {reason}")
         if not supported:
             report("  INFO: With the default `compiler_configs: {'enable': 'auto'}`, PtyRAD falls back to eager mode automatically.")
+        elif _system() in AUTO_OPT_IN_SYSTEMS:
+            report(f"  INFO: {AUTO_OPT_IN_REASON}")
     except ImportError:
         report("WARNING: No JIT information because PyTorch can't be imported.")
     except Exception as e:

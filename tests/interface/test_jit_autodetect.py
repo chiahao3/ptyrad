@@ -120,6 +120,51 @@ def test_unrecognized_enable_is_treated_as_auto(monkeypatch):
 
 
 # --------------------------------------------------------------------------------------
+# macOS opt-in policy
+# --------------------------------------------------------------------------------------
+
+def _pretend_macos(monkeypatch):
+    # Patch PtyRAD's own seam rather than `platform.system`, which PyTorch calls on import
+    monkeypatch.setattr(jit, "_system", lambda: "Darwin")
+
+
+def test_auto_stays_eager_on_macos(monkeypatch):
+    """Triton on macOS can be silently wrong, so 'auto' must not turn JIT on there."""
+    calls = _patch_detection(monkeypatch, supported=True, smoke_test_ok=True)
+    _pretend_macos(monkeypatch)
+
+    assert jit.resolve_jit_enable({"enable": "auto"}) is False
+    assert calls == {"static": [], "smoke_test": []}  # Policy decides before any detection work
+
+
+def test_detect_jit_capability_reports_the_macos_policy(monkeypatch):
+    _pretend_macos(monkeypatch)
+    achievable, reason = jit.detect_jit_capability()
+    assert achievable is False
+    assert "macOS" in reason and "'enable': true" in reason
+
+
+def test_explicit_true_still_enables_jit_on_macos(monkeypatch):
+    calls = _patch_detection(monkeypatch, supported=True)
+    _pretend_macos(monkeypatch)
+    assert jit.resolve_jit_enable({"enable": True}) is True
+    assert calls["smoke_test"] == []
+
+
+def test_macos_policy_does_not_change_the_capability_check(monkeypatch):
+    """check_jit_support answers 'can it', not 'should we', so it stays platform-neutral."""
+    _pretend_macos(monkeypatch)
+    monkeypatch.setattr(jit, "_has_cxx_compiler", lambda: True)
+    assert jit.check_jit_support("cpu")[0] is True
+
+
+def test_auto_is_unaffected_on_other_platforms(monkeypatch):
+    monkeypatch.setattr(jit, "_system", lambda: "Linux")
+    _patch_detection(monkeypatch, supported=True, smoke_test_ok=True)
+    assert jit.resolve_jit_enable({"enable": "auto"}) is True
+
+
+# --------------------------------------------------------------------------------------
 # Static capability check (no torch.compile involved)
 # --------------------------------------------------------------------------------------
 

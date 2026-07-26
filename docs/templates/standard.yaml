@@ -59,4 +59,4 @@ recon_params:
     recon_dir_affixes: ['default'] # Customizable affixes of reconstruction folder name with presets like 'minimal', 'default', 'all'. See docs for 19 more detailed controls.
     prefix: '' # Prefix this string to the reconstruction folder name. Note that a "_" will be automatically generated.
     postfix: '' # Postfix this string to the reconstruction folder name. Note that a "_" will be automatically generated.
-    compiler_configs: {'enable': 'auto'} # 'auto' (default) uses PyTorch JIT compilation for a 1.3-1.9x speedup if this machine supports it, and falls back to eager mode otherwise. Set to true to force it on, or false to always run eager.
+    compiler_configs: {'enable': 'auto'} # 'auto' (default) uses PyTorch JIT compilation for a 1.3-1.9x speedup if this machine supports it, and falls back to eager mode otherwise. macOS is opt-in only. Set to true to force it on, or false to always run eager.
