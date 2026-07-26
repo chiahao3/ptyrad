@@ -1,0 +1,6 @@
+# Store text files with LF line endings across platforms.
+* text=auto eol=lf
+
+# Preserve native Windows batch-file line endings.
+*.bat text eol=crlf
+*.cmd text eol=crlf
