@@ -57,6 +57,7 @@ class PtychoModel(torch.nn.Module):
         crop_pos (torch.Tensor): Cropping positions.
         init_probe_pos_shifts (torch.Tensor): Frozen copy of the initial probe position shifts.
         active_indices (torch.Tensor): Scan indices being optimized, or None when all are active.
+        pos_is_2d (bool): Whether the fitted probe positions span 2D, or None until resolved.
         slice_thickness (torch.Tensor): slice thickness (dz) parameter.
         dx (torch.Tensor): Pixel size in the x direction.
         dk (torch.Tensor): K-space sampling interval.
@@ -134,6 +135,7 @@ class PtychoModel(torch.nn.Module):
             self.simu_match_mode        = init_variables['simu_match_mode']
             self.probe_int_sum          = self.get_complex_probe_view().abs().pow(2).sum() # This is only used for the `fix_probe_int`
             self.active_indices         = None # Set by `prepare_recon` once `INDICES_MODE` is resolved, None means all positions are active
+            self.pos_is_2d              = None # Resolved on the first `pos_affine` application. Cached per model because one CombinedConstraint is shared by every hypertune trial
             self.loss_iters             = []
             self.iter_times             = []
             self.dz_iters               = []
@@ -423,6 +425,7 @@ class PtychoModel(torch.nn.Module):
         """
 
         self.active_indices = None if indices is None else torch.as_tensor(indices, dtype=torch.long, device=self.device)
+        self.pos_is_2d = None # The fitted subset changed, so any cached scan dimensionality no longer applies
         
     def forward(self, indices, return_raw=False):
         """ Doing the forward pass and get an output diffraction pattern for each input index """

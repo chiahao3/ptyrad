@@ -31,6 +31,7 @@ class DummyModel:
             None if active_indices is None else torch.as_tensor(active_indices, dtype=torch.long)
         )
         self.convergence_iters = defaultdict(list)
+        self.pos_is_2d = None
 
     @property
     def probe_pos(self):
@@ -200,6 +201,30 @@ def test_constraint_is_skipped_for_a_line_scan(caplog):
     assert model.convergence_iters == {}
     # Resolved once and cached, so the warning is not repeated every iteration
     assert caplog.text.count("cannot determine a 2D affine model") == 1
+
+
+def test_scan_dimensionality_is_not_shared_between_models():
+    """One ``CombinedConstraint`` is reused across every hypertune trial, each with its own model.
+
+    Caching the line-scan decision on the constraint would let the first trial's scan geometry
+    decide the behaviour for every later trial, so the decision lives on the model instead.
+    """
+    line_init = make_scan(n_slow=1, n_fast=16)
+    line_model = DummyModel(line_init, line_init + np.stack([np.zeros(16), 0.2 * np.arange(16)], -1))
+
+    grid_init = make_scan()
+    grid_model = DummyModel(grid_init, apply_affine(grid_init, rotation=1.0))
+    grid_before = grid_model.opt_probe_pos_shifts.detach().clone()
+
+    constraint = make_constraint()
+    with torch.no_grad():
+        constraint.apply_pos_affine(line_model, niter=1)  # line scan resolves to skipped
+        constraint.apply_pos_affine(grid_model, niter=1)  # the 2D model must still be constrained
+
+    assert line_model.pos_is_2d is False
+    assert grid_model.pos_is_2d is True
+    assert not torch.equal(grid_model.opt_probe_pos_shifts.detach(), grid_before)
+    assert grid_model.convergence_iters["pos_affine_rotation"][0][1] == pytest.approx(1.0, abs=1e-3)
 
 
 def test_constraint_is_skipped_for_a_single_row_indices_mode_subset():

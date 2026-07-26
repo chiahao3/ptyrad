@@ -49,7 +49,6 @@ class CombinedConstraint(torch.nn.Module):
         super(CombinedConstraint, self).__init__()
         self.device = device
         self.constraint_params = constraint_params
-        self.pos_is_2d = None # Resolved on the first `pos_affine` application, the scan geometry is fixed so it never changes afterwards
 
     def _should_apply_at_iter(self, constraint_name, niter, inclusive_end=False):
         """Check if the constraint should be applied at the current iteration.
@@ -447,15 +446,17 @@ class CombinedConstraint(torch.nn.Module):
                 fit_indices = fit_indices.to(pos.device) # `get_probe_pos` routes through CPU on MPS
             pos_ref_sel = pos_ref if fit_indices is None else pos_ref[fit_indices]
 
-            # A 2D affine model is only determined by a 2D scan, so resolve this once and skip the constraint for line scans
-            if self.pos_is_2d is None:
-                self.pos_is_2d = is_2d_pos(pos_ref_sel, POS_AFFINE_MIN_EXTENT)
-                if not self.pos_is_2d:
+            # A 2D affine model is only determined by a 2D scan, so resolve this once and skip the constraint for line scans.
+            # The result is cached on the model rather than on self, because a single CombinedConstraint is reused across
+            # every Optuna trial while each trial builds its own model with its own scan geometry.
+            if model.pos_is_2d is None:
+                model.pos_is_2d = is_2d_pos(pos_ref_sel, POS_AFFINE_MIN_EXTENT)
+                if not model.pos_is_2d:
                     extents = get_pos_rms_extent(pos_ref_sel).tolist()
                     logger.warning(f"WARNING: The probe positions fitted by `pos_affine` spread less than {POS_AFFINE_MIN_EXTENT} px "
                                    f"along one direction (RMS extent = {[round(e, 4) for e in extents]} px), which cannot determine a 2D affine model. "
                                    f"`pos_affine` is skipped for the rest of this reconstruction, please disable it for line scans.")
-            if not self.pos_is_2d:
+            if not model.pos_is_2d:
                 return
 
             pos_fit, affine_mat = fit_affine_pos(pos_ref, pos, fit_indices=fit_indices)
