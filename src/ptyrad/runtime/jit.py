@@ -65,27 +65,41 @@ def _torch_version() -> Tuple[int, int]:
         return (99, 99)
 
 
-def resolve_device_type(device=None) -> str:
-    """Resolve the device type string ('cuda', 'mps', 'xpu', 'cpu') used for JIT detection.
+def resolve_device(device=None) -> str:
+    """Resolve the canonical device string ('cuda:1', 'mps', 'cpu') used for JIT detection.
+
+    The GPU index is preserved (and filled in from the current CUDA device when the caller
+    only gave a bare 'cuda') so that the capability check and the functional probe both
+    target the exact GPU the reconstruction will run on, which matters on heterogeneous
+    hosts where the visible GPUs have different compute capabilities.
 
     Args:
         device (torch.device or str or None, optional): The target device. When None
-            (e.g. multi-GPU runs where `accelerate` owns device placement), the type is
+            (e.g. multi-GPU runs where `accelerate` owns device placement), it is
             inferred from the available accelerators.
 
     Returns:
-        str: The resolved device type.
+        str: The resolved device string, suitable for `torch.device()`.
     """
     import torch
 
     if device is not None:
-        return torch.device(device).type
+        dev = torch.device(device)
+    elif torch.cuda.is_available():
+        dev = torch.device("cuda")
+    elif torch.backends.mps.is_available():
+        dev = torch.device("mps")
+    else:
+        dev = torch.device("cpu")
 
-    if torch.cuda.is_available():
-        return "cuda"
-    if torch.backends.mps.is_available():
-        return "mps"
-    return "cpu"
+    # Pin down which CUDA GPU is meant, since that's the one PyTorch would allocate on
+    if dev.type == "cuda" and dev.index is None and torch.cuda.is_available():
+        try:
+            dev = torch.device("cuda", torch.cuda.current_device())
+        except Exception:
+            pass
+
+    return str(dev)
 
 
 def _has_triton() -> bool:
@@ -112,13 +126,20 @@ def _has_cxx_compiler() -> bool:
     return any(shutil.which(c) for c in candidates if c)
 
 
-def _min_cuda_capability(device_type: str) -> Optional[Tuple[int, int]]:
-    """Return the lowest CUDA compute capability among the visible CUDA GPUs, or None."""
+def _cuda_capability(device_str: str) -> Optional[Tuple[int, int]]:
+    """Return the CUDA compute capability of the selected GPU, or None if it's not a CUDA device.
+
+    When the device carries no index (so the selected GPU is unknown), the lowest capability
+    among the visible GPUs is returned to stay conservative.
+    """
     import torch
 
-    if device_type != "cuda" or not torch.cuda.is_available():
+    dev = torch.device(device_str)
+    if dev.type != "cuda" or not torch.cuda.is_available():
         return None
     try:
+        if dev.index is not None:
+            return torch.cuda.get_device_capability(dev.index)
         caps = [torch.cuda.get_device_capability(d) for d in range(torch.cuda.device_count())]
         return min(caps) if caps else None
     except Exception:
@@ -126,15 +147,16 @@ def _min_cuda_capability(device_type: str) -> Optional[Tuple[int, int]]:
 
 
 @lru_cache(maxsize=None)
-def check_jit_support(device_type: str = "cpu", backend: str = "inductor") -> Tuple[bool, str]:
+def check_jit_support(device_str: str = "cpu", backend: str = "inductor") -> Tuple[bool, str]:
     """Statically check whether ``torch.compile`` is expected to work on this machine.
 
     This is a cheap, side-effect-free inspection of the environment. It never
     raises: any unexpected failure is reported as "unsupported" with a reason.
 
     Args:
-        device_type (str, optional): Target device type ('cuda', 'mps', 'xpu', 'cpu').
-            Defaults to 'cpu'.
+        device_str (str, optional): Target device, either a bare type ('cuda', 'mps', 'cpu')
+            or an indexed device ('cuda:1') so that per-GPU properties are read from the GPU
+            actually selected for the reconstruction. Defaults to 'cpu'.
         backend (str, optional): The ``torch.compile`` backend. Defaults to 'inductor'.
 
     Returns:
@@ -147,6 +169,7 @@ def check_jit_support(device_type: str = "cpu", backend: str = "inductor") -> Tu
         return False, "PyTorch is not importable"
 
     system = platform.system()
+    device_type = torch.device(device_str).type
 
     # (1) torch.compile must exist at all
     version = _torch_version()
@@ -183,11 +206,11 @@ def check_jit_support(device_type: str = "cpu", backend: str = "inductor") -> Tu
                 hint = f" {TRITON_WINDOWS_HINT}" if system == "Windows" else ""
                 return False, f"Triton is not available for the '{device_type}' TorchInductor backend.{hint}"
 
-            capability = _min_cuda_capability(device_type)
+            capability = _cuda_capability(device_str)
             if capability is not None and capability < MIN_CUDA_CAPABILITY:
                 return False, (
-                    f"CUDA compute capability {capability[0]}.{capability[1]} is below the "
-                    f"{MIN_CUDA_CAPABILITY[0]}.{MIN_CUDA_CAPABILITY[1]} required by Triton"
+                    f"CUDA compute capability {capability[0]}.{capability[1]} of device '{device_str}' "
+                    f"is below the {MIN_CUDA_CAPABILITY[0]}.{MIN_CUDA_CAPABILITY[1]} required by Triton"
                 )
 
         elif device_type == "mps":
@@ -205,7 +228,7 @@ def check_jit_support(device_type: str = "cpu", backend: str = "inductor") -> Tu
                 )
 
     return True, (
-        f"PyTorch {torch.__version__} on {system} with device '{device_type}' "
+        f"PyTorch {torch.__version__} on {system} with device '{device_str}' "
         f"and backend '{backend}' meets the JIT requirements"
     )
 
@@ -215,22 +238,22 @@ def _jit_probe_fn(x):
     return (x * x + 1.0).sum()
 
 
-def _sync_device(device_type: str) -> None:
+def _sync_device(device) -> None:
     """Synchronize the device so asynchronous kernel failures surface inside the probe."""
     import torch
 
     try:
-        if device_type == "cuda" and torch.cuda.is_available():
-            torch.cuda.synchronize()
-        elif device_type == "mps" and torch.backends.mps.is_available():
-            torch.mps.synchronize()
+        if device.type == "cuda" and torch.cuda.is_available():
+            torch.cuda.synchronize(device)
+        elif device.type == "mps" and torch.backends.mps.is_available():
+            torch.mps.synchronize() # As of pytorch 2.10, torch.mps.synchronize doesn't take any arg
     except Exception:
         pass
 
 
 @lru_cache(maxsize=None)
 def probe_jit_compile(
-    device_type: str = "cpu",
+    device_str: str = "cpu",
     backend: str = "inductor",
     fullgraph: bool = False,
     dynamic: Optional[bool] = None,
@@ -250,7 +273,9 @@ def probe_jit_compile(
         only Python-level exceptions are handled.
 
     Args:
-        device_type (str, optional): Target device type. Defaults to 'cpu'.
+        device_str (str, optional): Target device, e.g. 'cpu', 'mps', or 'cuda:1'. The probe runs
+            on the exact device given so it reflects the GPU used by the reconstruction.
+            Defaults to 'cpu'.
         backend (str, optional): The ``torch.compile`` backend. Defaults to 'inductor'.
         fullgraph (bool, optional): Whether to require a graph break-free trace. Defaults to False.
         dynamic (bool or None, optional): Dynamic shape handling. Defaults to None.
@@ -261,9 +286,9 @@ def probe_jit_compile(
     import torch
 
     try:
-        device = torch.device(device_type)
+        device = torch.device(device_str)
     except Exception as err:
-        return False, f"invalid device type '{device_type}' ({err})"
+        return False, f"invalid device type '{device_str}' ({err})"
 
     try:
         with warnings.catch_warnings():
@@ -273,7 +298,7 @@ def probe_jit_compile(
             compiled_fn = torch.compile(_jit_probe_fn, backend=backend, fullgraph=fullgraph, dynamic=dynamic)
             out = compiled_fn(x)
             out.backward()
-            _sync_device(device_type)
+            _sync_device(device)
 
             # Guard against a backend that "succeeds" but returns garbage
             if x.grad is None or not bool(torch.isfinite(out).all()) or not bool(torch.isfinite(x.grad).all()):
@@ -289,7 +314,7 @@ def probe_jit_compile(
         except Exception:
             pass
 
-    return True, f"torch.compile probe succeeded on device '{device_type}' with backend '{backend}'"
+    return True, f"torch.compile probe succeeded on device '{device_str}' with backend '{backend}'"
 
 
 def detect_jit_capability(device=None, backend: str = "inductor", fullgraph: bool = False,
@@ -311,13 +336,13 @@ def detect_jit_capability(device=None, backend: str = "inductor", fullgraph: boo
     Returns:
         tuple[bool, str]: (achievable, reason).
     """
-    device_type = resolve_device_type(device)
+    device_str = resolve_device(device)
 
-    supported, reason = check_jit_support(device_type, backend)
+    supported, reason = check_jit_support(device_str, backend)
     if not supported or not run_probe:
         return supported, reason
 
-    return probe_jit_compile(device_type, backend, fullgraph, dynamic)
+    return probe_jit_compile(device_str, backend, fullgraph, dynamic)
 
 
 def resolve_jit_enable(configs: Optional[dict], device=None, run_probe: Optional[bool] = None) -> bool:
@@ -356,23 +381,23 @@ def resolve_jit_enable(configs: Optional[dict], device=None, run_probe: Optional
     backend = configs.get("backend") or "inductor"
     fullgraph = bool(configs.get("fullgraph", False))
     dynamic = configs.get("dynamic")
-    device_type = resolve_device_type(device)
+    device_str = resolve_device(device)
 
     if enable is True:
-        supported, reason = check_jit_support(device_type, backend)
+        supported, reason = check_jit_support(device_str, backend)
         if not supported:
             logger.warning(
                 f"WARNING: JIT compilation is explicitly enabled ('enable': true) but this machine may not support it: {reason}"
             )
             logger.warning("         Set 'enable': 'auto' to let PtyRAD fall back to eager mode automatically.")
         else:
-            logger.info(f"JIT compilation is explicitly enabled ('enable': true) on device '{device_type}'")
+            logger.info(f"JIT compilation is explicitly enabled ('enable': true) on device '{device_str}'")
         return True
 
     if enable != "auto":
         logger.warning(f"WARNING: Unrecognized compiler_configs['enable'] = {enable!r}, treating it as 'auto'")
 
-    logger.info(f"### Auto-detecting JIT (torch.compile) capability on device '{device_type}' ###")
+    logger.info(f"### Auto-detecting JIT (torch.compile) capability on device '{device_str}' ###")
     achievable, reason = detect_jit_capability(
         device=device, backend=backend, fullgraph=fullgraph, dynamic=dynamic, run_probe=run_probe
     )

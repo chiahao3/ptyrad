@@ -47,33 +47,40 @@ def test_compiler_configs_enable_rejects_unknown_string():
 # resolve_jit_enable
 # --------------------------------------------------------------------------------------
 
-def _patch_detection(monkeypatch, supported, probe_ok=True, device_type="cpu"):
-    calls = {"static": 0, "probe": 0}
+def _patch_detection(monkeypatch, supported, probe_ok=True, device_str="cpu"):
+    calls = {"static": [], "probe": []}
 
-    def fake_static(device_type_arg="cpu", backend="inductor"):
-        calls["static"] += 1
+    def fake_static(device="cpu", backend="inductor"):
+        calls["static"].append(device)
         return (supported, "static reason")
 
-    def fake_probe(device_type_arg="cpu", backend="inductor", fullgraph=False, dynamic=None):
-        calls["probe"] += 1
+    def fake_probe(device="cpu", backend="inductor", fullgraph=False, dynamic=None):
+        calls["probe"].append(device)
         return (probe_ok, "probe reason")
 
     monkeypatch.setattr(jit, "check_jit_support", fake_static)
     monkeypatch.setattr(jit, "probe_jit_compile", fake_probe)
-    monkeypatch.setattr(jit, "resolve_device_type", lambda device=None: device_type)
+    monkeypatch.setattr(jit, "resolve_device", lambda device=None: device_str)
     return calls
 
 
 def test_auto_enables_when_supported(monkeypatch):
     calls = _patch_detection(monkeypatch, supported=True, probe_ok=True)
     assert jit.resolve_jit_enable({"enable": "auto"}) is True
-    assert calls == {"static": 1, "probe": 1}
+    assert len(calls["static"]) == 1 and len(calls["probe"]) == 1
+
+
+def test_detection_carries_the_selected_device_into_check_and_probe(monkeypatch):
+    calls = _patch_detection(monkeypatch, supported=True, probe_ok=True, device_str="cuda:1")
+    assert jit.resolve_jit_enable({"enable": "auto"}, device="cuda:1") is True
+    assert calls["static"] == ["cuda:1"]
+    assert calls["probe"] == ["cuda:1"]
 
 
 def test_auto_falls_back_when_static_check_fails(monkeypatch):
     calls = _patch_detection(monkeypatch, supported=False)
     assert jit.resolve_jit_enable({"enable": "auto"}) is False
-    assert calls["probe"] == 0  # No point probing a machine that can't compile
+    assert calls["probe"] == []  # No point probing a machine that can't compile
 
 
 def test_auto_falls_back_when_probe_fails(monkeypatch):
@@ -85,19 +92,19 @@ def test_auto_falls_back_when_probe_fails(monkeypatch):
 def test_auto_probe_false_skips_the_probe(monkeypatch):
     calls = _patch_detection(monkeypatch, supported=True, probe_ok=False)
     assert jit.resolve_jit_enable({"enable": "auto", "auto_probe": False}) is True
-    assert calls["probe"] == 0
+    assert calls["probe"] == []
 
 
 def test_explicit_true_is_respected_even_when_unsupported(monkeypatch):
     calls = _patch_detection(monkeypatch, supported=False)
     assert jit.resolve_jit_enable({"enable": True}) is True
-    assert calls["probe"] == 0  # Forced on, so no need to spend time probing
+    assert calls["probe"] == []  # Forced on, so no need to spend time probing
 
 
 def test_explicit_false_skips_detection_entirely(monkeypatch):
     calls = _patch_detection(monkeypatch, supported=True)
     assert jit.resolve_jit_enable({"enable": False}) is False
-    assert calls == {"static": 0, "probe": 0}
+    assert calls == {"static": [], "probe": []}
 
 
 def test_missing_or_empty_configs_default_to_auto(monkeypatch):
@@ -116,6 +123,19 @@ def test_unrecognized_enable_is_treated_as_auto(monkeypatch):
 # Static capability check (no torch.compile involved)
 # --------------------------------------------------------------------------------------
 
+def test_resolve_device_preserves_and_fills_the_cuda_index(monkeypatch):
+    """Detection must target the GPU the reconstruction runs on, not just its device type."""
+    import torch
+
+    assert jit.resolve_device("cuda:1") == "cuda:1"
+    assert jit.resolve_device("cpu") == "cpu"
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "current_device", lambda: 2)
+    assert jit.resolve_device("cuda") == "cuda:2"  # Bare 'cuda' resolves to the current GPU
+    assert jit.resolve_device() == "cuda:2"
+
+
 def test_check_jit_support_rejects_old_pytorch(monkeypatch):
     monkeypatch.setattr(jit, "_torch_version", lambda: (1, 13))
     supported, reason = jit.check_jit_support("cpu")
@@ -132,7 +152,7 @@ def test_check_jit_support_requires_triton_on_cuda(monkeypatch):
 
 def test_check_jit_support_rejects_old_cuda_capability(monkeypatch):
     monkeypatch.setattr(jit, "_has_triton", lambda: True)
-    monkeypatch.setattr(jit, "_min_cuda_capability", lambda device_type: (6, 1))
+    monkeypatch.setattr(jit, "_cuda_capability", lambda device_str: (6, 1))
     supported, reason = jit.check_jit_support("cuda")
     assert supported is False
     assert "compute capability" in reason
@@ -140,9 +160,21 @@ def test_check_jit_support_rejects_old_cuda_capability(monkeypatch):
 
 def test_check_jit_support_accepts_modern_cuda(monkeypatch):
     monkeypatch.setattr(jit, "_has_triton", lambda: True)
-    monkeypatch.setattr(jit, "_min_cuda_capability", lambda device_type: (8, 6))
+    monkeypatch.setattr(jit, "_cuda_capability", lambda device_str: (8, 6))
     supported, _ = jit.check_jit_support("cuda")
     assert supported is True
+
+
+def test_check_jit_support_reads_capability_of_the_selected_gpu(monkeypatch):
+    """A weak GPU elsewhere on the host must not veto JIT on the GPU actually selected."""
+    capabilities = {0: (6, 1), 1: (8, 6)}
+    monkeypatch.setattr(jit, "_has_triton", lambda: True)
+    monkeypatch.setattr(
+        jit, "_cuda_capability", lambda device_str: capabilities[int(device_str.split(":")[1])]
+    )
+
+    assert jit.check_jit_support("cuda:1")[0] is True
+    assert jit.check_jit_support("cuda:0")[0] is False
 
 
 def test_check_jit_support_rejects_mps_on_old_pytorch(monkeypatch):

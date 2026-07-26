@@ -185,11 +185,11 @@ def print_jit_info():
 
     report("### JIT compiler information ###")
     try:
-        from ptyrad.runtime.jit import check_jit_support, resolve_device_type
+        from ptyrad.runtime.jit import check_jit_support, resolve_device
 
-        device_type = resolve_device_type()
-        supported, reason = check_jit_support(device_type)
-        report(f"Expected compute device: {device_type}")
+        device_str = resolve_device()
+        supported, reason = check_jit_support(device_str)
+        report(f"Expected compute device: {device_str}")
         report(f"JIT (torch.compile) available: {supported}")
         report(f"  {reason}")
         if not supported:
