@@ -492,13 +492,20 @@ def make_output_folder(
             thresh = constraint_params["kr_thresh"]["thresh"]
             parts.append(f"{krt_str}{thresh}")
 
-        if (
-            constraint_params["obj_rblur"]["start_iter"] is not None
-            and constraint_params["obj_rblur"]["std"] != 0
-        ):
-            obj_type = constraint_params["obj_rblur"]["obj_type"]
-            obj_str = {"both": "o", "amplitude": "oa", "phase": "op"}.get(obj_type)
-            parts.append(f"{obj_str}rblur{constraint_params['obj_rblur']['std']}")
+        if constraint_params["obj_rblur"]["start_iter"] is not None:
+            # `.get()` since legacy dicts (e.g. hand-built configs or configs loaded with
+            # validation skipped) may predate the 'start_std'/'end_std' keys entirely
+            start_std = constraint_params["obj_rblur"].get("start_std")
+            end_std = constraint_params["obj_rblur"].get("end_std")
+            if start_std is not None and end_std is not None:
+                if start_std != 0 or end_std != 0:
+                    obj_type = constraint_params["obj_rblur"]["obj_type"]
+                    obj_str = {"both": "o", "amplitude": "oa", "phase": "op"}.get(obj_type)
+                    parts.append(f"{obj_str}rblur{start_std}-{end_std}")
+            elif constraint_params["obj_rblur"]["std"] != 0:
+                obj_type = constraint_params["obj_rblur"]["obj_type"]
+                obj_str = {"both": "o", "amplitude": "oa", "phase": "op"}.get(obj_type)
+                parts.append(f"{obj_str}rblur{constraint_params['obj_rblur']['std']}")
 
         if (
             constraint_params["obj_zblur"]["start_iter"] is not None

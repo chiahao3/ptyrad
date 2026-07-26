@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 # 2025.08.10 CHL: 'freq' is deprecated since PtyRAD v0.1.0b11 and it might be removed at stable release of 0.1.0.
 
@@ -62,6 +62,23 @@ class ObjRblur(BaseModel):
     obj_type: Literal["amplitude", "phase", "both"] = Field(default="both", description="Object type for blur")
     kernel_size: int = Field(default=5, ge=1, description="Kernel size for Gaussian blur (odd, >6*std+1)")
     std: float = Field(default=0.4, ge=0.0, description="Standard deviation for Gaussian blur")
+    start_std: Optional[float] = Field(default=None, ge=0.0, description="Starting standard deviation for linear std decay (frequency marching); must be set together with `end_std` and requires `start_iter`/`end_iter` to be set")
+    end_std: Optional[float] = Field(default=None, ge=0.0, description="Ending standard deviation for linear std decay (frequency marching), reached exactly (inclusive) at `end_iter`; must be set together with `start_std` and requires `start_iter`/`end_iter` to be set; must be <= `start_std`")
+
+    @model_validator(mode="after")
+    def validate_std_decay(self):
+        if (self.start_std is None) != (self.end_std is None):
+            raise ValueError("'start_std' and 'end_std' must be set together to enable linear std decay; leave both as null to use the static 'std' value instead.")
+        if self.start_std is not None:
+            if self.start_iter is None:
+                raise ValueError("'start_iter' must be set (not null) when using 'start_std'/'end_std' decay.")
+            if self.end_iter is None:
+                raise ValueError("'end_iter' must be set (not null) when using 'start_std'/'end_std' decay, since the decay is interpolated over the ['start_iter', 'end_iter'] window (inclusive of both ends).")
+            if self.end_iter <= self.start_iter:
+                raise ValueError("'end_iter' must be greater than 'start_iter' when using 'start_std'/'end_std' decay.")
+            if self.end_std > self.start_std:
+                raise ValueError("'end_std' must be <= 'start_std'; obj_rblur decay only supports decaying (or holding) the blur strength, not increasing it.")
+        return self
 
 
 class ObjZblur(BaseModel):
@@ -252,12 +269,19 @@ class ConstraintParams(BaseModel):
         default_factory=ObjRblur, description="Lateral Gaussian blur for object"
     )
     """
-    Apply a "lateral" 2D Gaussian blur to the object. 
-    This removes some high frequency noise in the reconstructed object and make the apperance smoother. 
-    'obj_type' can be either 'amplitude', 'phase', or 'both' with a specified 'std' and 'kernel_size' in unit of real-space px. 
-    Ideally kernel size is odd (like 5) and larger than 6std+1 so it decays to 0. 
-    This is usually not needed if your dataset contains sufficient dose and the kMax is not insanely high 
+    Apply a "lateral" 2D Gaussian blur to the object.
+    This removes some high frequency noise in the reconstructed object and make the apperance smoother.
+    'obj_type' can be either 'amplitude', 'phase', or 'both' with a specified 'std' and 'kernel_size' in unit of real-space px.
+    Ideally kernel size is odd (like 5) and larger than 6std+1 so it decays to 0.
+    This is usually not needed if your dataset contains sufficient dose and the kMax is not insanely high
     (extremely high kMax would gives very fine dx which makes feature appear sharper and probably more seemingly noisy)
+    Alternatively, set 'start_std' and 'end_std' together (this requires 'start_iter' and 'end_iter' to also be set,
+    with 'end_iter' > 'start_iter', and 'end_std' <= 'start_std' since this only supports decaying/holding the blur,
+    not increasing it) to linearly decay the blur strength from 'start_std' down to 'end_std' across the
+    ['start_iter', 'end_iter'] window instead of using a static 'std'. Both endpoints are inclusive: the blur is exactly
+    'start_std' at 'start_iter' and exactly 'end_std' at 'end_iter' (applied there regardless of 'step' alignment).
+    This implements frequency marching: a strong blur early on suppresses high spatial frequencies so the low-frequency
+    structure of the object is reconstructed first, then the blur weakens over iterations to let finer detail resolve.
     """
     
     obj_zblur: ObjZblur = Field(

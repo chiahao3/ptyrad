@@ -44,19 +44,37 @@ class CombinedConstraint(torch.nn.Module):
         self.device = device
         self.constraint_params = constraint_params
 
-    def _should_apply_at_iter(self, constraint_name, niter):
-        """Check if the constraint should be applied at the current iteration."""
+    def _should_apply_at_iter(self, constraint_name, niter, inclusive_end=False):
+        """Check if the constraint should be applied at the current iteration.
+
+        By default 'end_iter' is exclusive (constraint stops before reaching it), matching
+        the long-standing behavior for every other constraint. Pass inclusive_end=True to
+        additionally force application exactly at 'end_iter' regardless of 'step' alignment,
+        which is used by the obj_rblur std decay so the schedule actually reaches 'end_std'.
+        """
         start = self.constraint_params[constraint_name]['start_iter']
         step  = self.constraint_params[constraint_name]['step']
         end   = self.constraint_params[constraint_name]['end_iter']
-        
+
         if start is None:
             return False
         if niter < start:
             return False
-        if end is not None and niter >= end:
-            return False
+        if end is not None:
+            if niter > end:
+                return False
+            if niter == end:
+                return inclusive_end
         return (niter - start) % step == 0
+
+    def _linear_decay(self, constraint_name, niter, start_val, end_val):
+        """Linearly interpolate start_val -> end_val (inclusive) over the constraint's [start_iter, end_iter] window."""
+        start_iter = self.constraint_params[constraint_name]['start_iter']
+        end_iter = self.constraint_params[constraint_name]['end_iter']
+        if start_iter is None or end_iter is None or end_iter <= start_iter:
+            return start_val
+        progress = min(max((niter - start_iter) / (end_iter - start_iter), 0.0), 1.0)
+        return start_val + (end_val - start_val) * progress
 
     def apply_probe_mask_k(self, model, niter):
         ''' Apply probe amplitude constraint in Fourier space '''
@@ -161,11 +179,24 @@ class CombinedConstraint(torch.nn.Module):
         # Note that it's not clear whether applying blurring after every iteration would ever reach a steady state
         # However, this is at least similar to PtychoShelves' eng. reg_mu
         
-        if self._should_apply_at_iter('obj_rblur', niter) and self.constraint_params['obj_rblur']['std'] !=0:
+        # Use `.get()` for the decay keys so legacy dicts that predate `start_std`/`end_std`
+        # (e.g. hand-built configs or configs loaded with validation skipped) don't KeyError
+        start_std = self.constraint_params['obj_rblur'].get('start_std')
+        end_std   = self.constraint_params['obj_rblur'].get('end_std')
+        is_decay  = start_std is not None and end_std is not None
+
+        if self._should_apply_at_iter('obj_rblur', niter, inclusive_end=is_decay):
             obj_type       = self.constraint_params['obj_rblur']['obj_type']
             obj_rblur_ks   = self.constraint_params['obj_rblur']['kernel_size']
-            obj_rblur_std  = self.constraint_params['obj_rblur']['std']
-            
+
+            if is_decay:
+                obj_rblur_std = self._linear_decay('obj_rblur', niter, start_std, end_std)
+            else:
+                obj_rblur_std = self.constraint_params['obj_rblur']['std']
+
+            if obj_rblur_std == 0:
+                return
+
             if obj_type in ['amplitude', 'both']:
                 model.opt_obja.copy_(gaussian_blur(model.opt_obja, kernel_size=obj_rblur_ks, sigma=obj_rblur_std))
                 logger.debug(f"Apply lateral (y,x) Gaussian blur with std = {obj_rblur_std} px on obja at iter {niter}")
