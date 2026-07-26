@@ -22,8 +22,14 @@ from ptyrad.core.functional import (
     make_super_gaussian_mask,
     near_field_evolution_torch,
 )
+from ptyrad.utils.affine import decompose_affine_matrix
 
 logger = logging.getLogger(__name__)
+
+# A 2D affine model needs the fitted positions to span 2D. `pos_affine` is skipped when they spread
+# less than this many object pixels along either principal direction, which excludes line scans while
+# staying far below the extent of any real 2D scan pattern.
+POS_AFFINE_MIN_EXTENT = 1.0
 
 @torch.compiler.disable # Nearly no benefit to compile the iter-wise constraint as it's negligible comparing to forward/backward pass
 class CombinedConstraint(torch.nn.Module):
@@ -43,6 +49,7 @@ class CombinedConstraint(torch.nn.Module):
         super(CombinedConstraint, self).__init__()
         self.device = device
         self.constraint_params = constraint_params
+        self.pos_is_2d = None # Resolved on the first `pos_affine` application, the scan geometry is fixed so it never changes afterwards
 
     def _should_apply_at_iter(self, constraint_name, niter, inclusive_end=False):
         """Check if the constraint should be applied at the current iteration.
@@ -52,9 +59,15 @@ class CombinedConstraint(torch.nn.Module):
         additionally force application exactly at 'end_iter' regardless of 'step' alignment,
         which is used by the obj_rblur std decay so the schedule actually reaches 'end_std'.
         """
-        start = self.constraint_params[constraint_name]['start_iter']
-        step  = self.constraint_params[constraint_name]['step']
-        end   = self.constraint_params[constraint_name]['end_iter']
+        # A missing entry means the constraint is absent from the params file (only possible when validation
+        # is skipped, otherwise pydantic fills the defaults), so treat it as disabled instead of raising.
+        params = self.constraint_params.get(constraint_name)
+        if params is None:
+            return False
+
+        start = params['start_iter']
+        step  = params['step']
+        end   = params['end_iter']
 
         if start is None:
             return False
@@ -409,6 +422,60 @@ class CombinedConstraint(torch.nn.Module):
             relax_str = f'relaxed (pos_shifts - ({1-relax:.3f}*original_mean))' if relax != 0 else 'hard'
             logger.debug(f"Apply {relax_str} position recentering constraint at iter {niter}. Original mean = {orig_mean.detach().cpu().numpy().round(3)}. probe_pos_shifts.mean(0) becomes {model.opt_probe_pos_shifts.mean(0).detach().cpu().numpy().round(3)}")
 
+    def apply_pos_affine(self, model, niter):
+        ''' Apply an affine model constraint on probe positions '''
+        # The individual probe positions are updated from local (and often noisy) gradients, but a scan
+        # miscalibration such as a global rotation, scale, asymmetry, or shear error is shared by ALL positions.
+        # Here we least-squares fit a 2D affine model mapping the initial probe positions to the current ones,
+        # and mix the current positions with that fit. Fitting against the *initial* positions (rather than an
+        # idealized raster grid) keeps any deliberate irregularity of the initial scan pattern and constrains
+        # only the optimized *deviation* from it, so the fitted transformation is a correction relative to
+        # however the scan was initialized (e.g. by `pos_scan_affine` or by resuming a previous reconstruction).
+        # Here, relax=1 means fully relaxed and essentially no constraint, consistent with the other constraints.
+        # Note that `crop_pos` is a frozen integer buffer, so the whole correction lands on the sub-px shifts.
+
+        if self._should_apply_at_iter('pos_affine', niter):
+            relax = self.constraint_params['pos_affine']['relax']
+            if relax == 1:
+                return
+
+            pos_ref = get_probe_pos(model.crop_pos, model.init_probe_pos_shifts)
+            pos     = get_probe_pos(model.crop_pos, model.opt_probe_pos_shifts)
+            # Positions excluded by `INDICES_MODE` never got a gradient and would bias the fit towards the identity
+            fit_indices = model.active_indices
+            if fit_indices is not None:
+                fit_indices = fit_indices.to(pos.device) # `get_probe_pos` routes through CPU on MPS
+            pos_ref_sel = pos_ref if fit_indices is None else pos_ref[fit_indices]
+
+            # A 2D affine model is only determined by a 2D scan, so resolve this once and skip the constraint for line scans
+            if self.pos_is_2d is None:
+                self.pos_is_2d = is_2d_pos(pos_ref_sel, POS_AFFINE_MIN_EXTENT)
+                if not self.pos_is_2d:
+                    extents = get_pos_rms_extent(pos_ref_sel).tolist()
+                    logger.warning(f"WARNING: The probe positions fitted by `pos_affine` spread less than {POS_AFFINE_MIN_EXTENT} px "
+                                   f"along one direction (RMS extent = {[round(e, 4) for e in extents]} px), which cannot determine a 2D affine model. "
+                                   f"`pos_affine` is skipped for the rest of this reconstruction, please disable it for line scans.")
+            if not self.pos_is_2d:
+                return
+
+            pos_fit, affine_mat = fit_affine_pos(pos_ref, pos, fit_indices=fit_indices)
+            pos_new = relax * pos + (1 - relax) * pos_fit
+            new_shifts = pos_new - model.crop_pos.to(pos_new.device) # Subtract the frozen integer crop_pos back off to get the sub-px shifts
+            model.opt_probe_pos_shifts.copy_(new_shifts.to(model.opt_probe_pos_shifts.dtype))
+
+            # Record the fitted affine alongside the other convergence metrics so the correction is traceable in model.hdf5
+            scale, asymmetry, rotation, shear = decompose_affine_matrix(affine_mat.cpu().numpy())
+            for name, value in zip(('scale', 'asymmetry', 'rotation', 'shear'), (scale, asymmetry, rotation, shear)):
+                model.convergence_iters[f'pos_affine_{name}'].append((niter, float(value)))
+
+            rms_change = (pos_new - pos).pow(2).sum(-1).mean().sqrt()
+            relax_str = f'relaxed ({relax}*pos + ({1-relax}*pos_affine_fit))' if relax != 0 else 'hard'
+            logger.debug(f"Apply {relax_str} affine position constraint at iter {niter}. "
+                         f"Fitted affine of the current positions relative to the initial positions has "
+                         f"(scale, asymmetry, rotation, shear) = ({scale:.5f}, {asymmetry:.5f}, {rotation:.4f} deg, {shear:.4f} deg). "
+                         f"RMS position change = {rms_change.item():.4f} px, "
+                         f"max |probe_pos_shifts| becomes {model.opt_probe_pos_shifts.abs().max().item():.4f} px")
+
     def apply_tilt_smooth(self, model, niter):
         ''' Apply Gaussian blur to object tilts '''
         # Note that the smoothing is applied along the last 2 axes, which are scan dimensions, so the unit of std is "scan positions"
@@ -450,6 +517,7 @@ class CombinedConstraint(torch.nn.Module):
             self.apply_obja_thresh   (model, niter)
             self.apply_objp_postiv   (model, niter)
             # Position constraints
+            self.apply_pos_affine    (model, niter) # Applied before `pos_recenter` because the affine fit preserves the current global offset
             self.apply_pos_recenter  (model, niter)
             # Local tilt constraint
             self.apply_tilt_smooth   (model, niter)
@@ -715,6 +783,81 @@ def shift_obj_along_z(objc, z_shift):
     obj_shifted = torch.fft.ifft(obj_f, dim=1)
     
     return obj_shifted
+
+def get_probe_pos(crop_pos, pos_shifts):
+    """Combine the integer cropping positions and the sub-pixel shifts into probe positions.
+
+    The fit is done in float64 because the probe positions are large numbers (object pixel
+    coordinates) while their affine deviation is often sub-pixel. MPS does not support float64,
+    so the positions are routed through CPU on Apple Silicon.
+
+    Args:
+        crop_pos (torch.Tensor): Integer cropping positions of shape (N, 2), each row is (y, x).
+        pos_shifts (torch.Tensor): Sub-pixel probe position shifts of shape (N, 2).
+
+    Returns:
+        torch.Tensor: Probe positions of shape (N, 2) in float64.
+    """
+
+    device = torch.device('cpu') if pos_shifts.device.type == 'mps' else pos_shifts.device
+    return crop_pos.to(device=device, dtype=torch.float64) + pos_shifts.to(device=device, dtype=torch.float64)
+
+def get_pos_rms_extent(pos):
+    """Return how far the positions spread, in object pixels, along each of their 2 principal directions.
+
+    The singular values of the mean-centered positions measure the spread along the principal axes,
+    and dividing by ``sqrt(N)`` converts them into an RMS extent that does not grow with the number
+    of scan positions. Sub-pixel jitter and a real scan direction differ by orders of magnitude in
+    this measure, unlike in the singular value ratio, where a jittered line scan looks the same as a
+    legitimately thin 2D scan.
+
+    Args:
+        pos (torch.Tensor): Probe positions of shape (N, 2).
+
+    Returns:
+        torch.Tensor: The 2 RMS extents in descending order.
+    """
+
+    return torch.linalg.svdvals(pos - pos.mean(0)) / max(pos.shape[0], 1) ** 0.5
+
+def is_2d_pos(pos, min_extent=POS_AFFINE_MIN_EXTENT):
+    """Check whether the positions span 2D well enough to determine a 2D affine model."""
+
+    return bool((get_pos_rms_extent(pos) >= min_extent).all())
+
+def fit_affine_pos(pos_ref, pos, fit_indices=None):
+    """Fit the current probe positions with a 2D affine model of the reference probe positions.
+
+    Solves the linear least-squares problem ``(pos_ref - pos_ref.mean(0)) @ A ~= (pos - pos.mean(0))``.
+    The 2x2 matrix ``A`` has exactly 4 degrees of freedom, matching the (scale, asymmetry, rotation,
+    shear) parametrization used by :func:`ptyrad.utils.affine.compose_affine_matrix`, and it follows
+    the same row-vector convention (``pos_new = pos @ A``) used when the initial scan pattern is
+    affine transformed. The global translation is handled by the centering, so the fitted positions
+    keep the same mean as the fitted input positions.
+
+    Args:
+        pos_ref (torch.Tensor): Reference probe positions of shape (N, 2), each row is (y, x).
+        pos (torch.Tensor): Current probe positions of shape (N, 2).
+        fit_indices (torch.Tensor, optional): Indices of the positions the affine model is fitted to.
+            Defaults to `None`, which fits all positions. The fitted model is always evaluated for
+            all N positions regardless of this subset, so it extrapolates to the excluded ones.
+
+    Returns:
+        tuple:
+            - **pos_fit** (torch.Tensor): Affine-fitted probe positions of shape (N, 2).
+            - **affine_mat** (torch.Tensor): The fitted (2, 2) affine matrix.
+    """
+
+    pos_ref_sel = pos_ref if fit_indices is None else pos_ref[fit_indices]
+    pos_sel     = pos     if fit_indices is None else pos[fit_indices]
+
+    pos_ref_mean = pos_ref_sel.mean(0)
+    pos_mean = pos_sel.mean(0)
+
+    affine_mat = torch.linalg.lstsq(pos_ref_sel - pos_ref_mean, pos_sel - pos_mean).solution # (2,2)
+    pos_fit = (pos_ref - pos_ref_mean) @ affine_mat + pos_mean
+
+    return pos_fit, affine_mat
 
 def complex_ratio_constraint(model, alpha1, alpha2):
     # https://doi.org/10.1016/j.ultramic.2024.114068

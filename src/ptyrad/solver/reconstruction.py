@@ -300,6 +300,7 @@ def prepare_recon(model, init, params):
     d_out        = get_blob_size(dx, probe_int, output='d90') # d_out unit is in Ang
     indices      = select_scan_indices(init_variables['N_scan_slow'], init_variables['N_scan_fast'], subscan_slow=subscan_slow, subscan_fast=subscan_fast, mode=INDICES_MODE)
     batches      = make_batches(indices, pos, batch_size, mode=GROUP_MODE, seed=init_variables['random_seed'])
+    model.set_active_indices(indices) # Let constraints that pool across positions (e.g. `pos_affine`) know which positions are actually optimized
     fig_grouping = plot_pos_grouping(pos, batches, circle_diameter=d_out/dx, diameter_type='90%', dot_scale=1, show_fig=False, pass_fig=True)
     logger.info(f"The effective batch size (i.e., how many probe positions are simultaneously used for 1 update of ptychographic parameters) is batch_size * grad_accumulation = {batch_size} * {grad_accumulation} = {batch_size*grad_accumulation}")
 

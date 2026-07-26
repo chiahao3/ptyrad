@@ -554,6 +554,11 @@ def make_output_folder(
             relax_str = "" if relax == 0 else f"{round(relax, 2)}"
             parts.append(f"opos{mode_str}{relax_str}")
 
+        if constraint_params.get("pos_affine", {}).get("start_iter") is not None:
+            relax = constraint_params["pos_affine"]["relax"]
+            relax_str = "" if relax == 0 else f"{round(relax, 2)}"
+            parts.append(f"paff{relax_str}")
+
         if constraint_params["tilt_smooth"]["start_iter"] is not None:
             parts.append(f"tsm{round(constraint_params['tilt_smooth']['std'], 2)}")
 

@@ -55,6 +55,8 @@ class PtychoModel(torch.nn.Module):
         N_scan_slow (torch.Tensor): Number of scans in the slow direction.
         N_scan_fast (torch.Tensor): Number of scans in the fast direction.
         crop_pos (torch.Tensor): Cropping positions.
+        init_probe_pos_shifts (torch.Tensor): Frozen copy of the initial probe position shifts.
+        active_indices (torch.Tensor): Scan indices being optimized, or None when all are active.
         slice_thickness (torch.Tensor): slice thickness (dz) parameter.
         dx (torch.Tensor): Pixel size in the x direction.
         dk (torch.Tensor): K-space sampling interval.
@@ -116,6 +118,7 @@ class PtychoModel(torch.nn.Module):
             self.register_buffer      ('N_scan_slow',     torch.tensor(init_variables['N_scan_slow'],      dtype=torch.int32, device=device))# Saving this for reference, the cropping is based on self.obj_ROI_grid.
             self.register_buffer      ('N_scan_fast',     torch.tensor(init_variables['N_scan_fast'],      dtype=torch.int32, device=device))# Saving this for reference, the cropping is based on self.obj_ROI_grid.
             self.register_buffer      ('crop_pos',        torch.tensor(init_variables['crop_pos'],         dtype=torch.int32, device=device))# Saving this for reference, the cropping is based on self.obj_ROI_grid.
+            self.register_buffer      ('init_probe_pos_shifts', torch.tensor(init_variables['probe_pos_shifts'], dtype=torch.float32, device=device))# Frozen copy of the initial sub-px shifts so `pos_affine` can fit against the initial probe positions
             self.register_buffer      ('slice_thickness', torch.tensor(init_variables['slice_thickness'],  dtype=torch.float32, device=device))# Saving this for reference
             self.register_buffer      ('dx',              torch.tensor(init_variables['dx'],               dtype=torch.float32, device=device))# Saving this for reference
             self.register_buffer      ('dk',              torch.tensor(init_variables['dk'],               dtype=torch.float32, device=device))# Saving this for reference
@@ -130,6 +133,7 @@ class PtychoModel(torch.nn.Module):
             self.simu_Npix              = init_variables['simu_Npix']
             self.simu_match_mode        = init_variables['simu_match_mode']
             self.probe_int_sum          = self.get_complex_probe_view().abs().pow(2).sum() # This is only used for the `fix_probe_int`
+            self.active_indices         = None # Set by `prepare_recon` once `INDICES_MODE` is resolved, None means all positions are active
             self.loss_iters             = []
             self.iter_times             = []
             self.dz_iters               = []
@@ -403,7 +407,22 @@ class PtychoModel(torch.nn.Module):
     
     def clear_cache(self):
         """Clear temporary attributes like cached object patches."""
-        self._current_object_patches = None    
+        self._current_object_patches = None
+
+    def set_active_indices(self, indices):
+        """Record which scan indices this reconstruction actually optimizes.
+
+        `INDICES_MODE` can restrict the reconstruction to a subset of the scan positions, in which
+        case the remaining entries of the optimizable tensors never receive a gradient. Constraints
+        that pool information across all positions (currently `pos_affine`) need to know about that
+        subset, otherwise the untouched entries would bias the pooled quantity.
+
+        Args:
+            indices (array-like or None): Flattened scan indices being optimized. `None` means all
+                positions are active, which is also the default before this is called.
+        """
+
+        self.active_indices = None if indices is None else torch.as_tensor(indices, dtype=torch.long, device=self.device)
         
     def forward(self, indices, return_raw=False):
         """ Doing the forward pass and get an output diffraction pattern for each input index """

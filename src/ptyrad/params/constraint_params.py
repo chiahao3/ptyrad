@@ -213,6 +213,15 @@ class PosRecenter(BaseModel):
     relax: float = Field(default=0.0, ge=0.0, le=1.0, description="Relaxation parameter for position recentering")
 
 
+class PosAffine(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    start_iter: Optional[int] = Field(default=None, ge=1, description="Start iteration of applying the affine probe position constraint")
+    step: Optional[int] = Field(default=1, ge=1, description="Interval of iterations of applying the affine probe position constraint")
+    end_iter: Optional[int] = Field(default=None, ge=1, description="End iteration of applying the affine probe position constraint")
+    relax: float = Field(default=0.0, ge=0.0, le=1.0, description="Relaxation parameter for the affine probe position constraint")
+
+
 class TiltSmooth(BaseModel):
     model_config = {"extra": "forbid"}
 
@@ -433,6 +442,32 @@ class ConstraintParams(BaseModel):
     This would keep the probe, probe position, and object relatively fixed in place even with large position learning rates.
     """
     
+    pos_affine: PosAffine = Field(
+        default_factory=PosAffine, description="Affine regularization of the probe positions"
+    )
+    """
+    Fit the probe positions (crop_pos + probe_pos_shifts) with a 2D affine model
+    (scale, asymmetry, rotation, shear, plus a global translation) and pull the positions back towards that fit.
+    The individual probe positions are updated from local (and often noisy) gradients,
+    while a scan miscalibration such as a global rotation, scale, or shear error is shared by ALL positions.
+    This constraint keeps that well-determined global component and suppresses the noisy local part,
+    so a large global miscalibration is corrected as a whole instead of being fought out position by position.
+    The affine model is fitted against the INITIAL probe positions, so the fitted transformation is a correction
+    RELATIVE to however the scan pattern was initialized, not an absolute description of the scan.
+    If you initialized with 'pos_scan_affine' or resumed from a previous reconstruction,
+    the total affine transformation of the scan is the matrix product of the initial one and this fitted correction.
+    Fitting against the initial positions (instead of an idealized raster grid) also means any deliberate irregularity
+    of the initial scan pattern is preserved, and only the optimized deviation from it is constrained to be affine.
+    The constraint can be relaxed by the `relax` param that is a weighted sum between the current positions
+    and the affine-fitted positions, so relax=0 fully replaces the positions with the fit and relax=1 is a no-op.
+    A large `relax` (e.g., 0.7-0.9) makes it a soft constraint that gradually steers the positions towards
+    a globally consistent affine correction while still allowing local position refinement.
+    The fitted (scale, asymmetry, rotation, shear) are recorded in 'convergence_iters' of the output model.hdf5.
+    Note that this constraint only updates 'probe_pos_shifts' and never touches the integer 'crop_pos',
+    so a large global correction is entirely absorbed by the sub-pixel probe shifts.
+    A 2D affine model requires a 2D scan pattern, so this constraint is automatically skipped for line scans.
+    """
+
     tilt_smooth: TiltSmooth = Field(
         default_factory=TiltSmooth, description="Smoothing of local object tilts"
     )
@@ -459,5 +494,6 @@ __all__ = [
     "ObjaThresh",
     "ObjpPostiv",
     "PosRecenter",
+    "PosAffine",
     "TiltSmooth"
 ]

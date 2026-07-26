@@ -22,3 +22,5 @@ jobs:
           python -m pip install -e ".[test]"
       - name: Run interface smoke tests
         run: python -m pytest tests/interface
+      - name: Run core unit tests
+        run: python -m pytest tests/core
