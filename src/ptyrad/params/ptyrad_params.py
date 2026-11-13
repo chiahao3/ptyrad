@@ -4,7 +4,7 @@ Defines the integrated pydantic model ``PtyRADParams`` used for default filling 
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from .init_params import InitParams
 from .hypertune_params import HypertuneParams
@@ -74,3 +74,16 @@ class PtyRADParams(BaseModel):
     """
     Defines available options and validation rules for the ``recon_params`` dictionary.
     """
+
+    @model_validator(mode="after")
+    def check_exterior_loss_geometry(self):
+        outside = self.loss_params.loss_outside
+        if outside.state and outside.weight > 0:
+            init = self.init_params
+            if init.simu_match_mode != 'crop':
+                raise ValueError("loss_outside requires init_params.simu_match_mode: crop")
+            if init.meas_pad is not None and init.meas_pad.mode is not None:
+                raise ValueError("loss_outside requires measurements without meas_pad")
+            if init.meas_resample is not None and init.meas_resample.mode == 'on_the_fly':
+                raise ValueError("loss_outside requires measurements without on-the-fly meas_resample")
+        return self

@@ -582,10 +582,12 @@ def recon_step(batches, grad_accumulation, model, optimizer, scheduler, loss_fn,
         dict: A dictionary where each key corresponds to a loss component name and the value is
             a list of loss values computed for each batch in the iteration.
     """
-    loss_names = list(loss_fn.loss_params.keys())
+    loss_names = loss_fn.loss_names
 
     # Use the method on the wrapped model (DDP) if it exists
     model_instance = model.module if hasattr(model, "module") else model
+    if loss_fn.outside_enabled and (niter == 1 or loss_fn.outside_prior is None):
+        loss_fn.prepare_outside_prior(model_instance)
 
     # Unwrap accelerate-prepared optimizer to access param_groups for LR tracking
     optimizer_instance = optimizer.optimizer if hasattr(optimizer, "optimizer") else optimizer
@@ -804,9 +806,13 @@ def toggle_grad_requires(model, niter):
 def compute_loss(batch, model, model_instance, measured_DP, loss_fn):
     """Compute the model output and loss."""
     
-    model_DP = model(batch)
+    raw_model_DP = None
+    if loss_fn.outside_enabled:
+        model_DP, raw_model_DP = model(batch, return_raw_and_detector=True)
+    else:
+        model_DP = model(batch)
     object_patches = model_instance._current_object_patches
-    loss_batch, losses = loss_fn(model_DP, measured_DP, object_patches[0], object_patches[1], model_instance.omode_occu)
+    loss_batch, losses = loss_fn(model_DP, measured_DP, object_patches[0], object_patches[1], model_instance.omode_occu, raw_model_DP)
    
     return loss_batch, losses
 
@@ -829,7 +835,10 @@ def loss_logger(batch_losses, niter, iter_t):
         loss values for each component.
     """
     avg_losses = {name: np.mean(values) for name, values in batch_losses.items()}
-    loss_str = ', '.join([f"{name}: {value:.4f}" for name, value in avg_losses.items()])
+    loss_str = ', '.join(
+        f"{name}: {value:.3e}" if name == 'loss_outside' else f"{name}: {value:.4f}"
+        for name, value in avg_losses.items()
+    )
     logger.info(f"Iter: {niter}, Total Loss: {sum(avg_losses.values()):.4f}, {loss_str}, in {parse_sec_to_time_str(iter_t)}")
     loss_iter = sum(avg_losses.values())
     return loss_iter

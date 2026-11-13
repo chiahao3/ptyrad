@@ -1,4 +1,41 @@
 # PtyRAD: Ptychographic Reconstruction with Automatic Differentiation
+
+## 本分支实验功能 · 约束 Crop 模式的外圈散射
+
+实测衍射为 128×128、前向模拟为 256×256 时，中心窗口继续用原有振幅、Poisson 或 PACBED 损失拟合。可选的 `loss_outside` 给模拟外圈一个环平均强度上限，抑制明显偏高的高角散射。它复用已有的前向模拟，默认关闭。
+
+### 曲线怎么定
+
+一阶 Born 近似下，散射振幅与静电势的傅里叶变换成正比。取屏蔽库仑势 $V(R)\propto e^{-\kappa R}/R$，其傅里叶变换与 $(q^2+\kappa^2)^{-1}$ 成正比。强度是振幅模平方，弹性项在大 $q$ 处趋于 $q^{-4}$。实现用以下相对半径曲线，并容许实测数据里的背景底。 [电子散射因子推导](https://journals.iucr.org/a/issues/2019/06/00/lk5052/)
+
+$$I(r)=B+A\left(\frac{1+s^2}{r^2+s^2}\right)^2$$
+
+$r=q/q_{\mathrm{edge}}$，$q_{\mathrm{edge}}$ 是从盘中心到方形探测器边缘的空间频率，$s$ 是相对屏蔽尺度。代码先平均扫描位置的实测衍射，再在对角扇区 $0.78\le r<1$ 鲁棒拟合 $B,A,s$。方形探测器的角落还有 $1\le r<1.4$ 的实测像素。留出这些环，取实测与拟合强度比的第 90 百分位，最低取 1，再乘 `margin` 作为上限的放大系数。224 和 232 两块真实 ROI 的角落留出 MAE 分别为全图平均衍射强度的 **0.85%** 和 **2.94%**。这两个数字衡量探测器角落的外推误差。多切片衍射、背景和晶体方向性都会改变实际散射，探测器以外的强度分布仍待验证。
+
+### 怎么接入训练
+
+把下面的键合并进现有 YAML，保留其他参数。示例值是首轮对照的起点。
+
+```yaml
+init_params:
+  simu_Npix: 256
+  simu_match_mode: crop
+  meas_pad: null
+
+loss_params:
+  loss_outside:
+    state: true
+    weight: 0.05
+    transition_px: 4.0
+    margin: 1.25
+```
+
+每个小批次对 Crop 外的模拟强度按环加权平均。像素距裁切边界越远，权重按 $1-\exp[-(d/d_0)^2]$ 平滑升高，$d_0$ 是 `transition_px`。某环的预测强度 $\bar P$ 超过上限 $\bar U$ 时，加入平方振幅惩罚 $[\sqrt{\bar P}-\sqrt{\bar U}]_+^2$，低于上限时惩罚为零。这保留了单个衍射斑点的强度自由度。日志在第一轮记录拟合参数和角落误差，每轮记录加权后的 `loss_outside`。
+
+首轮建议在同一界面 ROI、同一初始化和迭代数下比较关闭与开启外圈损失。一起看中心实测窗口的前向拟合、模拟外圈强度比例，以及同色标切片里的石墨条纹和金刚石哑铃。外圈比例下降只能说明约束起了作用，结构质量还要看这些独立指标。
+
+---
+
 ![PyPI - Version](https://img.shields.io/pypi/v/ptyrad)
 [![PyPI Downloads](https://static.pepy.tech/badge/ptyrad)](https://pepy.tech/projects/ptyrad)
 [![Anaconda-Server Badge](https://anaconda.org/conda-forge/ptyrad/badges/version.svg)](https://anaconda.org/conda-forge/ptyrad)

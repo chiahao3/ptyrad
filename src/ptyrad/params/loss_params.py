@@ -52,6 +52,17 @@ class LossSimlar(BaseModel):
     blur_std: float = Field(default=1.0, ge=0.0, description="Standard deviation for Gaussian blur")
 
 
+class LossOutside(BaseModel):
+    """One-sided scattering prior outside a measured diffraction crop."""
+
+    model_config = {"extra": "forbid", "allow_inf_nan": False}
+
+    state: bool = Field(default=False, description="Enable exterior scattering prior in crop mode")
+    weight: float = Field(default=0.05, ge=0.0, description="Weight of the exterior loss")
+    transition_px: float = Field(default=4.0, gt=0.0, description="Soft onset distance outside the detector edge in pixels")
+    margin: float = Field(default=1.25, ge=1.0, description="Additional allowance above the corner-calibrated intensity bound")
+
+
 class LossParams(BaseModel):
     """
     Generally, the reconstruction loss is the CombinedLoss = weight1 * loss1 + weight2 * loss2 + weight3 * loss3 ...
@@ -107,6 +118,8 @@ class LossParams(BaseModel):
     """
     
     
+    loss_outside: LossOutside = Field(default_factory=LossOutside, description="Scattering prior outside the detector crop")
+
     @model_validator(mode="after")
     def check_at_least_one_data_error(self):
         """Ensure at least one data-error loss term is enabled."""
@@ -125,5 +138,6 @@ __all__ = [
     "LossPoissn",
     "LossPacbed",
     "LossSparse",
-    "LossSimlar"
+    "LossSimlar",
+    "LossOutside",
 ]

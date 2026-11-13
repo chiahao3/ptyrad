@@ -32,6 +32,34 @@ class CombinedLoss(torch.nn.Module):
         self.device = device
         self.loss_params = loss_params
         self.mse = torch.nn.MSELoss(reduction='mean')
+        self.outside_prior = None
+
+    @property
+    def outside_enabled(self):
+        params = self.loss_params.get('loss_outside', {})
+        return params.get('state', False) and params.get('weight', 0.05) > 0
+
+    @property
+    def loss_names(self):
+        names = ['loss_single', 'loss_poissn', 'loss_pacbed', 'loss_sparse', 'loss_simlar']
+        if self.outside_enabled:
+            names.append('loss_outside')
+        return names
+
+    def prepare_outside_prior(self, model):
+        from .scattering_prior import OutsideScatteringLoss
+
+        loader = model.meas_loader
+        measurements = loader.meas_arr
+        if (model.simu_match_mode != 'crop' or loader.meas_padded is not None
+                or loader.meas_scale_factors is not None
+                or measurements.shape[-2:] != (model.meas_Npix, model.meas_Npix)):
+            raise ValueError("loss_outside requires a crop on the actual measurement sampling without on-the-fly padding or resampling")
+        params = self.loss_params['loss_outside']
+        self.outside_prior = OutsideScatteringLoss(
+            measurements, model.simu_Npix, params.get('transition_px', 4.0),
+            params.get('margin', 1.25), model.device,
+        )
 
     def get_loss_single(self, model_DP, measured_DP):
         """ Computes the loss based on Gaussian statistics of the diffraction patterns. """
@@ -142,7 +170,7 @@ class CombinedLoss(torch.nn.Module):
             loss_simlar = torch.tensor(0, dtype=torch.float32, device=self.device)
         return loss_simlar
     
-    def forward(self, model_DP, measured_DP, obja_patches, objp_patches, omode_occu):
+    def forward(self, model_DP, measured_DP, obja_patches, objp_patches, omode_occu, raw_model_DP=None):
         """
         Combines all the loss components and returns the total loss and individual losses.
 
@@ -153,6 +181,10 @@ class CombinedLoss(torch.nn.Module):
         losses.append(self.get_loss_pacbed(model_DP, measured_DP))
         losses.append(self.get_loss_sparse(objp_patches, omode_occu))
         losses.append(self.get_loss_simlar(obja_patches, objp_patches, omode_occu))
+        if self.outside_enabled:
+            if self.outside_prior is None or raw_model_DP is None:
+                raise ValueError("loss_outside requires a prepared prior and the full simulated diffraction pattern")
+            losses.append(self.outside_prior(raw_model_DP) * self.loss_params['loss_outside'].get('weight', 0.05))
         total_loss = sum(losses)
         return total_loss, losses
     

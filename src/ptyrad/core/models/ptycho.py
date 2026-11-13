@@ -405,8 +405,8 @@ class PtychoModel(torch.nn.Module):
         """Clear temporary attributes like cached object patches."""
         self._current_object_patches = None    
         
-    def forward(self, indices, return_raw=False):
-        """ Doing the forward pass and get an output diffraction pattern for each input index """
+    def forward(self, indices, return_raw=False, *, return_raw_and_detector=False):
+        """Return detector patterns, raw patterns, or `(detector, raw)` from one forward pass."""
         # The indices are passed in as an array and representing the whole batch
 
         obja_patches, objp_patches = self.get_obj_patches(indices)
@@ -418,6 +418,8 @@ class PtychoModel(torch.nn.Module):
         # Keep the object_patches for later object-specific loss
         self._current_object_patches = (obja_patches, objp_patches)
         
+        if return_raw_and_detector:
+            return dp_det, dp_fwd
         if return_raw:
             return dp_fwd
         else:
